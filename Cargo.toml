@@ -19,7 +19,7 @@ exclude = [".github/**", "scripts/**"]
 
 [dependencies]
 rand = "=0.9.3"
-serde = { version = "=1.0.228", features = ["derive"] }
+serde = { version = "=1.0.229", features = ["derive"] }
 
 [dev-dependencies]
 serde_json = { version = "=1.0.149", features = ["arbitrary_precision"] }
