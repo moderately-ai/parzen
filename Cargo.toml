@@ -18,7 +18,7 @@ categories = ["algorithms", "mathematics", "science"]
 exclude = [".github/**", "scripts/**"]
 
 [dependencies]
-rand = "=0.9.3"
+rand = "=0.10.2"
 serde = { version = "=1.0.228", features = ["derive"] }
 
 [dev-dependencies]
