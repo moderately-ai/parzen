@@ -98,20 +98,21 @@ impl Study {
 
     /// The best trial by objective value, according to the study's direction.
     ///
-    /// Returns `None` if no trials have been completed.
+    /// Returns `None` if no trials with comparable objective values have been
+    /// completed. Trials whose objective value is NaN are ignored.
     #[must_use]
     pub fn best_trial(&self) -> Option<&FrozenTrial> {
-        use std::cmp::Ordering;
-        // NaN values compare as Equal so they can't win over a real number.
         match self.direction {
             Direction::Maximize => self
                 .trials
                 .iter()
-                .max_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(Ordering::Equal)),
+                .filter(|trial| !trial.value.is_nan())
+                .max_by(|a, b| a.value.total_cmp(&b.value)),
             Direction::Minimize => self
                 .trials
                 .iter()
-                .min_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(Ordering::Equal)),
+                .filter(|trial| !trial.value.is_nan())
+                .min_by(|a, b| a.value.total_cmp(&b.value)),
         }
     }
 
@@ -231,6 +232,20 @@ mod tests {
         assert!(study.best_value().is_none());
         assert_eq!(study.num_trials(), 0);
         assert!(study.trials().is_empty());
+    }
+
+    #[test]
+    fn nan_objectives_are_ignored_for_best_trial() {
+        for direction in [Direction::Maximize, Direction::Minimize] {
+            let mut study = Study::new(direction, sampler_with_seed(42));
+            study.complete_trial(1.0);
+            study.complete_trial(f64::NAN);
+            assert_eq!(study.best_value(), Some(1.0));
+
+            let mut nan_only = Study::new(direction, sampler_with_seed(42));
+            nan_only.complete_trial(f64::NAN);
+            assert!(nan_only.best_trial().is_none());
+        }
     }
 
     #[test]
