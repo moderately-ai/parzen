@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       publish:
-        description: Publish the verified 0.1.0 crate to crates.io
+        description: Publish the verified crate version to crates.io
         type: boolean
         default: false
 
