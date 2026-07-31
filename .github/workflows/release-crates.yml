@@ -1,0 +1,110 @@
+name: release-crates
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: Publish the verified 0.1.0 crate to crates.io
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-crates-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+      - name: Require exact version tag
+        id: version
+        shell: bash
+        run: |
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "$GITHUB_REF" = "refs/tags/v$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: cargo publish --dry-run --locked
+      - name: Build candidate and inventory
+        shell: bash
+        run: |
+          version=${{ steps.version.outputs.version }}
+          cargo package --locked
+          cargo package --list --locked > "$RUNNER_TEMP/parzen-$version.files"
+          mv "$RUNNER_TEMP/parzen-$version.files" .
+          sha256sum "target/package/parzen-$version.crate" > crates.sha256
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: crates-io-candidate
+          retention-days: 14
+          if-no-files-found: error
+          path: |
+            target/package/parzen-*.crate
+            parzen-*.files
+            crates.sha256
+
+  publish:
+    needs: verify
+    if: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment: crates-io
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - uses: dtolnay/rust-toolchain@4be7066ada62dd38de10e7b70166bc74ed198c30
+        with:
+          toolchain: stable
+      - name: Publish or verify immutable version
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -n "${CARGO_REGISTRY_TOKEN:-}"
+          version=$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[0].version')
+          test "$GITHUB_REF" = "refs/tags/v$version"
+          index=https://index.crates.io/pa/rz/parzen
+          published=$(curl --fail --silent --show-error "$index" 2>/dev/null | jq -r "select(.vers == \"$version\") | .cksum" | tail -1 || true)
+          if [[ -n "$published" ]]; then
+            echo "parzen@$version already exists; skipping"
+            exit 0
+          fi
+          cargo package --locked
+          expected=$(sha256sum "target/package/parzen-$version.crate" | cut -d' ' -f1)
+          cargo publish --locked
+          for _ in {1..60}; do
+            published=$(curl --fail --silent --show-error "$index" 2>/dev/null | jq -r "select(.vers == \"$version\") | .cksum" | tail -1 || true)
+            [[ "$published" == "$expected" ]] && exit 0
+            sleep 5
+          done
+          echo "parzen@$version did not reach the registry with the expected checksum" >&2
+          exit 1
+
+  github-release:
+    needs: publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Create release if absent
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          tag=${GITHUB_REF_NAME}
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$tag" --repo "$GITHUB_REPOSITORY" --title "$tag" --generate-notes
