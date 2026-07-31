@@ -19,8 +19,6 @@
 //! estimating per-category densities, and sampling proportional to the
 //! Expected Improvement ratio `l(x) / g(x)`.
 
-use std::cmp::Ordering;
-
 use rand::{
     SeedableRng,
     distr::{Distribution, weighted::WeightedIndex},
@@ -136,7 +134,11 @@ impl TpeSampler {
             return 0;
         }
 
-        if completed_trials.len() < self.n_startup_trials {
+        let observed_trials = completed_trials
+            .iter()
+            .filter(|trial| !trial.value.is_nan())
+            .count();
+        if observed_trials == 0 || observed_trials < self.n_startup_trials {
             return self.sample_uniform(num_choices);
         }
 
@@ -156,15 +158,17 @@ impl TpeSampler {
         completed_trials: &[FrozenTrial],
         direction: Direction,
     ) -> usize {
-        // Sort trials by value. NaN trial values sort as Equal so they
-        // don't bubble to the top (can't win over a real value).
-        let mut sorted: Vec<&FrozenTrial> = completed_trials.iter().collect();
+        // NaN is not an objective value and must not influence either density.
+        let mut sorted: Vec<&FrozenTrial> = completed_trials
+            .iter()
+            .filter(|trial| !trial.value.is_nan())
+            .collect();
         match direction {
             Direction::Maximize => {
-                sorted.sort_by(|a, b| b.value.partial_cmp(&a.value).unwrap_or(Ordering::Equal));
+                sorted.sort_by(|a, b| b.value.total_cmp(&a.value));
             }
             Direction::Minimize => {
-                sorted.sort_by(|a, b| a.value.partial_cmp(&b.value).unwrap_or(Ordering::Equal));
+                sorted.sort_by(|a, b| a.value.total_cmp(&b.value));
             }
         }
 
@@ -271,6 +275,26 @@ mod tests {
                 sampler.sample_categorical("x", 1, &[], Direction::Maximize),
                 0
             );
+        }
+    }
+
+    #[test]
+    fn zero_startup_trials_samples_uniformly_before_any_observation() {
+        let mut sampler = sampler_with_startup(42, 0);
+        let choice = sampler.sample_categorical("x", 5, &[], Direction::Maximize);
+        assert!(choice < 5);
+    }
+
+    #[test]
+    fn nan_trials_do_not_enter_tpe_densities() {
+        let trials = vec![
+            make_trial(0, &[("x", 0)], f64::NAN),
+            make_trial(1, &[("x", 1)], 1.0),
+        ];
+        let mut sampler = sampler_with_startup(42, 1);
+
+        for _ in 0..10 {
+            assert!(sampler.sample_categorical("x", 2, &trials, Direction::Maximize) < 2);
         }
     }
 
