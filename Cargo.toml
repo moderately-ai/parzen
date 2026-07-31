@@ -22,7 +22,7 @@ rand = "=0.9.3"
 serde = { version = "=1.0.228", features = ["derive"] }
 
 [dev-dependencies]
-serde_json = { version = "=1.0.149", features = ["arbitrary_precision"] }
+serde_json = { version = "=1.0.151", features = ["arbitrary_precision"] }
 
 [package.metadata.docs.rs]
 all-features = true
