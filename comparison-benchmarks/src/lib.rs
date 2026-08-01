@@ -1,6 +1,7 @@
 //! Manual, process-isolated comparison harness for Rust TPE implementations.
 
 pub mod adapter;
+pub mod backends;
 pub mod cli;
 pub mod fixtures;
 pub mod objectives;
