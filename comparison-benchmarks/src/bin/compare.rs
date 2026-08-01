@@ -136,8 +136,11 @@ fn run() -> HarnessResult<()> {
         cli.operation
             .is_none_or(|operation| case.operation == operation)
     });
+    apply_history_filter(&cli.command, cli.history, &mut cases);
     for case in &mut cases {
-        if let Some(history) = cli.history {
+        if let Some(history) = cli.history
+            && !matches!(cli.command.as_str(), "scaling" | "memory" | "full")
+        {
             case.history = history;
         }
         if let Some(samples) = cli.samples {
@@ -651,6 +654,14 @@ fn cases_for(command: &str) -> HarnessResult<Vec<Case>> {
     Ok(cases)
 }
 
+fn apply_history_filter(command: &str, history: Option<usize>, cases: &mut Vec<Case>) {
+    if let Some(history) = history
+        && matches!(command, "scaling" | "memory" | "full")
+    {
+        cases.retain(|case| case.history == history);
+    }
+}
+
 fn print_work_plan(command: &str, cases: &[Case], backend_count: usize, timing_rounds: usize) {
     let invocations = cases
         .iter()
@@ -762,5 +773,14 @@ mod tests {
         assert_eq!(cli.scenario, Some(Scenario::IndependentFloat));
         assert_eq!(cli.operation, Some(Operation::Suggest));
         assert_eq!(cli.history, Some(100));
+    }
+
+    #[test]
+    fn memory_history_filter_selects_one_case() {
+        let mut cases = cases_for("memory").expect("cases");
+        cases.retain(|case| case.scenario == Scenario::IndependentFloat);
+        apply_history_filter("memory", Some(1_000), &mut cases);
+        assert_eq!(cases.len(), 1);
+        assert_eq!(cases[0].history, 1_000);
     }
 }
