@@ -31,7 +31,12 @@ impl Backend for ParzenBackend {
     fn semantics(config: &RunConfig) -> Vec<String> {
         vec![
             "Gaussian product kernels; explicit groups use joint trial-aligned mixtures".into(),
-            "fixed gamma = ceil(0.10 * observations), minimum one".into(),
+            match config.parzen_history {
+                ParzenHistory::Full => "gamma = ceil(0.10 * observations), minimum one".into(),
+                ParzenHistory::Bounded => {
+                    "gamma = min(ceil(0.10 * observations), 25), minimum one".into()
+                }
+            },
             "24 expected-improvement candidates; uniform observation weights".into(),
             format!(
                 "history policy: {}",
@@ -61,13 +66,17 @@ impl Backend for ParzenBackend {
         } else {
             ModelStrategy::Independent
         };
+        let gamma = match config.parzen_history {
+            ParzenHistory::Full => {
+                GammaStrategy::Custom(Arc::new(|n| ((n as f64) * 0.1).ceil().max(1.0) as usize))
+            }
+            ParzenHistory::Bounded => GammaStrategy::Optuna,
+        };
         let sampler = TpeSampler::new(
             TpeSamplerConfig::performance(config.seed)
                 .startup_trials(10)
                 .ei_candidates(NonZeroUsize::new(24).ok_or("invalid candidate count")?)
-                .gamma(GammaStrategy::Custom(Arc::new(|n| {
-                    ((n as f64) * 0.1).ceil().max(1.0) as usize
-                })))
+                .gamma(gamma)
                 .weights(WeightStrategy::Uniform)
                 .model(model)
                 .history(history),

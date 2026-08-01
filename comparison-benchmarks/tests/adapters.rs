@@ -6,7 +6,7 @@ use parzen_comparison_benchmarks::{
     },
     cli::RunConfig,
     fixtures::Fixture,
-    scenarios::Scenario,
+    scenarios::{ParzenHistory, Scenario},
 };
 
 fn validate_history<B: Backend>(scenario: Scenario, dimensions: usize) {
@@ -80,4 +80,22 @@ fn every_declared_supported_domain_executes() {
     validate_all_supported_domains::<TpeBackend>();
     validate_all_supported_domains::<HyperoptBackend>();
     validate_all_supported_domains::<OptimizerBackend>();
+}
+
+#[test]
+fn bounded_parzen_accepts_history_beyond_its_good_trial_cap() {
+    let config = RunConfig {
+        scenario: Scenario::LinearFloat,
+        dimensions: 1,
+        history: 1_000,
+        parzen_history: ParzenHistory::Bounded,
+        ..RunConfig::default()
+    };
+    let fixture = Fixture::generate(Scenario::LinearFloat, 1, 1_000, 42).expect("fixture");
+    let mut backend = ParzenBackend::create(&config).expect("backend");
+    for trial in &fixture.trials {
+        backend.ingest(trial).expect("ingest");
+    }
+    let suggestion = backend.suggest().expect("bounded suggestion");
+    assert_eq!(suggestion.len(), 1);
 }
