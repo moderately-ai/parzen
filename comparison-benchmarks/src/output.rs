@@ -12,7 +12,8 @@ use crate::{
     scenarios::{Operation, Scenario},
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 3;
+pub const ENVIRONMENT_SNAPSHOT_VAR: &str = "PARZEN_BENCH_ENVIRONMENT_SNAPSHOT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TimingStats {
@@ -85,6 +86,7 @@ pub struct BenchmarkRecord {
     pub operation: Operation,
     pub supported: bool,
     pub unsupported_reason: Option<String>,
+    pub execution_error: Option<String>,
     pub config: RunConfig,
     pub semantics: Vec<String>,
     pub fixture_checksum: u64,
@@ -117,6 +119,7 @@ impl BenchmarkRecord {
             operation: config.operation,
             supported: false,
             unsupported_reason: Some(reason),
+            execution_error: None,
             fixture_checksum: 0,
             result_checksum: 0,
             observations: 0,
@@ -132,15 +135,82 @@ impl BenchmarkRecord {
             semantics,
         }
     }
+
+    #[must_use]
+    pub fn timed_out(
+        backend: &str,
+        version: &str,
+        config: RunConfig,
+        environment: Environment,
+        timeout_seconds: u64,
+    ) -> Self {
+        Self::execution_failed(
+            backend,
+            version,
+            config,
+            environment,
+            format!("backend invocation exceeded {timeout_seconds} seconds"),
+        )
+    }
+
+    #[must_use]
+    pub fn execution_failed(
+        backend: &str,
+        version: &str,
+        config: RunConfig,
+        environment: Environment,
+        reason: String,
+    ) -> Self {
+        Self {
+            schema_version: SCHEMA_VERSION,
+            backend: backend.to_owned(),
+            backend_version: version.to_owned(),
+            scenario: config.scenario,
+            operation: config.operation,
+            supported: true,
+            unsupported_reason: None,
+            execution_error: Some(reason),
+            fixture_checksum: 0,
+            result_checksum: 0,
+            observations: 0,
+            profile_operations: None,
+            profile_wall_seconds: None,
+            comparison_round: None,
+            invocation_order: None,
+            timing: None,
+            quality: None,
+            memory: None,
+            environment,
+            config,
+            semantics: vec![
+                "result unavailable because the invocation did not complete".to_owned(),
+            ],
+        }
+    }
 }
 
 impl Environment {
     #[must_use]
     pub fn capture(machine_label: &str) -> Self {
+        if let Ok(snapshot) = std::env::var(ENVIRONMENT_SNAPSHOT_VAR)
+            && let Ok(mut environment) = serde_json::from_str::<Self>(&snapshot)
+        {
+            environment.timestamp_unix_seconds = timestamp_unix_seconds();
+            environment.cpu_affinity = cpu_affinity();
+            environment.available_parallelism =
+                std::thread::available_parallelism().map_or(0, usize::from);
+            environment.machine_label = machine_label.to_owned();
+            return environment;
+        }
+        Self::capture_preflight(machine_label)
+    }
+
+    /// Capture the suite-level machine preflight without consulting a parent
+    /// driver's cached snapshot.
+    #[must_use]
+    pub fn capture_preflight(machine_label: &str) -> Self {
         Self {
-            timestamp_unix_seconds: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .map_or(0, |duration| duration.as_secs()),
+            timestamp_unix_seconds: timestamp_unix_seconds(),
             git_commit: command_output("git", &["rev-parse", "HEAD"]),
             git_dirty: !command_output("git", &["status", "--porcelain"]).is_empty(),
             rustc: command_output("rustc", &["--version", "--verbose"]),
@@ -179,6 +249,12 @@ impl Environment {
             },
         }
     }
+}
+
+fn timestamp_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |duration| duration.as_secs())
 }
 
 fn command_output(program: &str, args: &[&str]) -> String {

@@ -98,7 +98,7 @@ impl FromStr for Scenario {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum Operation {
     Construct,
@@ -110,6 +110,21 @@ pub enum Operation {
     Quality,
     Memory,
     Profile,
+}
+
+impl Operation {
+    /// Whether multiple operations can be timed in one representative batch.
+    ///
+    /// Ingest is one whole-history operation. Cold suggestion requires a fresh
+    /// optimizer and history for each observation, making automatic batching
+    /// mostly untimed setup work.
+    #[must_use]
+    pub const fn is_batchable(self) -> bool {
+        matches!(
+            self,
+            Self::Construct | Self::Suggest | Self::Update | Self::Cycle
+        )
+    }
 }
 
 impl fmt::Display for Operation {

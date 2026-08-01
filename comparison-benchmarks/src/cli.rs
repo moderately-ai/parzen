@@ -37,6 +37,7 @@ pub struct RunConfig {
     pub seed: u64,
     pub samples: usize,
     pub warmup: usize,
+    pub calibration_ms: u64,
     pub profile_seconds: u64,
     pub parzen_history: ParzenHistory,
     pub machine_label: String,
@@ -52,8 +53,9 @@ impl Default for RunConfig {
             iterations: 0,
             budget: 100,
             seed: 42,
-            samples: 10,
-            warmup: 3,
+            samples: 5,
+            warmup: 1,
+            calibration_ms: 100,
             profile_seconds: 30,
             parzen_history: ParzenHistory::Full,
             machine_label: "unlabelled".to_owned(),
@@ -69,6 +71,9 @@ impl RunConfig {
         if self.samples == 0 {
             return Err("samples must be positive".into());
         }
+        if self.calibration_ms == 0 && self.iterations == 0 && self.operation.is_batchable() {
+            return Err("calibration duration must be positive for automatic timing".into());
+        }
         if self.budget < 10 && self.operation == Operation::Quality {
             return Err("quality budget must include the ten startup trials".into());
         }
@@ -81,6 +86,11 @@ impl RunConfig {
     #[must_use]
     pub const fn profile_duration(&self) -> Duration {
         Duration::from_secs(self.profile_seconds)
+    }
+
+    #[must_use]
+    pub const fn calibration_duration(&self) -> Duration {
+        Duration::from_millis(self.calibration_ms)
     }
 }
 
@@ -119,6 +129,7 @@ impl BackendCli {
                 "--seed" => config.seed = value()?.parse()?,
                 "--samples" => config.samples = value()?.parse()?,
                 "--warmup" => config.warmup = value()?.parse()?,
+                "--calibration-ms" => config.calibration_ms = value()?.parse()?,
                 "--profile-seconds" => config.profile_seconds = value()?.parse()?,
                 "--parzen-history" => config.parzen_history = value()?.parse()?,
                 "--machine-label" => config.machine_label = value()?,
@@ -138,7 +149,8 @@ impl BackendCli {
     pub const fn usage() -> &'static str {
         "options: --scenario NAME --operation NAME --history N --dimensions N \
          --iterations N --budget N --seed N --samples N --warmup N \
-         --profile-seconds N --parzen-history full|bounded --format human|json"
+         --calibration-ms N --profile-seconds N --parzen-history full|bounded \
+         --format human|json"
     }
 }
 
@@ -162,5 +174,13 @@ mod tests {
     #[test]
     fn quality_rejects_budget_below_shared_design() {
         assert!(BackendCli::parse(["--operation", "quality", "--budget", "9"]).is_err());
+    }
+
+    #[test]
+    fn routine_timing_defaults_are_bounded() {
+        let cli = BackendCli::parse(["--scenario", "linear-float"]).expect("CLI");
+        assert_eq!(cli.config.samples, 5);
+        assert_eq!(cli.config.warmup, 1);
+        assert_eq!(cli.config.calibration_ms, 100);
     }
 }

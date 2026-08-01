@@ -10,8 +10,8 @@ use crate::{
     scenarios::Operation,
 };
 
-const CALIBRATION_TARGET_NS: u128 = 250_000_000;
 const MAX_CALIBRATION_ITERATIONS: usize = 1_048_576;
+const MAX_STATE_GROWING_ITERATIONS: usize = 100;
 
 pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
     let config = cli.config.clone();
@@ -26,10 +26,15 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
             support.reason.unwrap_or_else(|| "unsupported".to_owned()),
         ));
     }
+    let fixture_count = if matches!(config.operation, Operation::Construct | Operation::Quality) {
+        0
+    } else {
+        config.history
+    };
     let fixture = Fixture::generate(
         config.scenario,
         config.dimensions,
-        config.history,
+        fixture_count,
         config.seed ^ 0xd1b5_4a32_d192_ed03,
     )?;
     let mut record = BenchmarkRecord {
@@ -40,6 +45,7 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         operation: config.operation,
         supported: true,
         unsupported_reason: None,
+        execution_error: None,
         config: config.clone(),
         semantics,
         fixture_checksum: fixture.checksum,
@@ -72,10 +78,12 @@ fn run_timing<B: Backend>(
     for _ in 0..config.warmup {
         let _ = black_box(run_batch::<B>(config, fixture, 1)?);
     }
-    let iterations = if config.iterations == 0 {
+    let iterations = if config.iterations > 0 {
+        config.iterations
+    } else if config.operation.is_batchable() {
         calibrate::<B>(config, fixture)?
     } else {
-        config.iterations
+        1
     };
     let mut raw = Vec::with_capacity(config.samples);
     let mut checksum = 0_u64;
@@ -99,19 +107,29 @@ fn run_timing<B: Backend>(
 }
 
 fn calibrate<B: Backend>(config: &RunConfig, fixture: &Fixture) -> HarnessResult<usize> {
+    let target_ns = config.calibration_duration().as_nanos();
+    let max_iterations = if matches!(config.operation, Operation::Update | Operation::Cycle) {
+        MAX_STATE_GROWING_ITERATIONS
+    } else {
+        MAX_CALIBRATION_ITERATIONS
+    };
     let mut iterations = 1;
     loop {
         let (elapsed, _) = measure_batch::<B>(config, fixture, iterations)?;
-        if elapsed >= CALIBRATION_TARGET_NS || iterations >= MAX_CALIBRATION_ITERATIONS {
+        if elapsed >= target_ns || iterations >= max_iterations {
             return Ok(iterations);
         }
-        iterations = iterations.saturating_mul(2).min(MAX_CALIBRATION_ITERATIONS);
+        let scale = target_ns.div_ceil(elapsed.max(1));
+        let estimated = iterations.saturating_mul(usize::try_from(scale).unwrap_or(usize::MAX));
+        iterations = estimated
+            .max(iterations.saturating_mul(2))
+            .min(max_iterations);
     }
 }
 
 fn operations_for(config: &RunConfig, fixture: &Fixture, iterations: usize) -> usize {
     if config.operation == Operation::Ingest {
-        fixture.trials.len().max(1)
+        fixture.trials.len().max(1).saturating_mul(iterations)
     } else {
         iterations
     }
@@ -129,18 +147,23 @@ fn measure_batch<B: Backend>(
             Ok((started.elapsed().as_nanos(), outcome))
         }
         Operation::Ingest => {
-            let mut backend = B::create(config)?;
-            let started = Instant::now();
-            for trial in &fixture.trials {
-                backend.ingest(black_box(trial))?;
+            let mut elapsed = 0;
+            let mut observations = 0;
+            for _ in 0..iterations {
+                let mut backend = B::create(config)?;
+                let started = Instant::now();
+                for trial in &fixture.trials {
+                    backend.ingest(black_box(trial))?;
+                }
+                elapsed += started.elapsed().as_nanos();
+                observations = backend.observations();
             }
-            let elapsed = started.elapsed().as_nanos();
             Ok((
                 elapsed,
                 BatchOutcome {
-                    operations: fixture.trials.len().max(1),
+                    operations: fixture.trials.len().max(1).saturating_mul(iterations),
                     checksum: fixture.checksum,
-                    observations: backend.observations(),
+                    observations,
                 },
             ))
         }

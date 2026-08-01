@@ -1,23 +1,27 @@
 use std::{
+    collections::HashSet,
     ffi::OsString,
     fs::{self, File},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
-    process::Command,
-    time::{SystemTime, UNIX_EPOCH},
+    process::{Command, Stdio},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use parzen_comparison_benchmarks::{
     HarnessResult,
-    output::BenchmarkRecord,
+    cli::RunConfig,
+    output::{BenchmarkRecord, ENVIRONMENT_SNAPSHOT_VAR, Environment},
     report::{read_jsonl, write_markdown},
     scenarios::{Operation, ParzenHistory, QUALITY_SEEDS, Scenario},
 };
+use wait_timeout::ChildExt;
 
 #[derive(Clone, Copy)]
 struct BackendSpec {
     label: &'static str,
     binary: &'static str,
+    version: &'static str,
     history: ParzenHistory,
 }
 
@@ -25,26 +29,31 @@ const BACKENDS: [BackendSpec; 5] = [
     BackendSpec {
         label: "parzen/full",
         binary: "bench-parzen",
+        version: "0.2.0",
         history: ParzenHistory::Full,
     },
     BackendSpec {
         label: "parzen/bounded",
         binary: "bench-parzen",
+        version: "0.2.0",
         history: ParzenHistory::Bounded,
     },
     BackendSpec {
         label: "tpe",
         binary: "bench-tpe",
+        version: "0.3.1",
         history: ParzenHistory::Full,
     },
     BackendSpec {
         label: "hyperopt",
         binary: "bench-hyperopt",
+        version: "0.0.17",
         history: ParzenHistory::Full,
     },
     BackendSpec {
         label: "optimizer",
         binary: "bench-optimizer",
+        version: "1.0.1",
         history: ParzenHistory::Full,
     },
 ];
@@ -60,6 +69,7 @@ struct Case {
     iterations: usize,
     samples: usize,
     warmup: usize,
+    calibration_ms: u64,
 }
 
 struct DriverCli {
@@ -69,6 +79,11 @@ struct DriverCli {
     output: Option<PathBuf>,
     machine_label: String,
     rounds: usize,
+    samples: Option<usize>,
+    warmup: Option<usize>,
+    calibration_ms: Option<u64>,
+    quality_seeds: usize,
+    timeout_seconds: u64,
     memory_binary_dir: Option<PathBuf>,
 }
 
@@ -109,13 +124,33 @@ fn run() -> HarnessResult<()> {
         .parent()
         .ok_or("compare executable has no parent directory")?
         .to_owned();
-    let mut writer = BufWriter::new(File::create(&output)?);
-    let cases = cases_for(&cli.command)?;
-    let timing_rounds = if cli.command == "smoke" {
+    let mut cases = cases_for(&cli.command)?;
+    for case in &mut cases {
+        if let Some(samples) = cli.samples {
+            case.samples = samples;
+        }
+        if let Some(warmup) = cli.warmup {
+            case.warmup = warmup;
+        }
+        if let Some(calibration_ms) = cli.calibration_ms {
+            case.calibration_ms = calibration_ms;
+        }
+    }
+    cases.retain(|case| {
+        case.operation != Operation::Quality
+            || QUALITY_SEEDS[..cli.quality_seeds].contains(&case.seed)
+    });
+    let timing_rounds = if matches!(cli.command.as_str(), "smoke" | "characterize") {
         1
     } else {
         cli.rounds
     };
+    print_work_plan(&cli.command, &cases, backends.len(), timing_rounds);
+    let suite_environment = Environment::capture_preflight(&cli.machine_label);
+    let environment_snapshot = serde_json::to_string(&suite_environment)?;
+    let mut writer = BufWriter::new(File::create(&output)?);
+    let mut failed_operations = HashSet::new();
+    let mut failed_suggestions = HashSet::new();
 
     for (case_index, case) in cases.iter().enumerate() {
         let rounds = if matches!(case.operation, Operation::Quality | Operation::Memory) {
@@ -140,7 +175,37 @@ fn run() -> HarnessResult<()> {
                 } else {
                     &executable_dir
                 };
-                let mut record = invoke_backend(binary_dir, backend, case, &cli.machine_label)?;
+                let operation_key = (backend.label, case.scenario, case.operation);
+                let suggestion_key = (backend.label, case.scenario);
+                let skip = failed_operations.contains(&operation_key)
+                    || (matches!(case.operation, Operation::Suggest | Operation::Cycle)
+                        && failed_suggestions.contains(&suggestion_key));
+                let mut record = if skip {
+                    BenchmarkRecord::execution_failed(
+                        backend_name(backend),
+                        backend.version,
+                        run_config(backend, case, &cli.machine_label),
+                        suite_environment.clone(),
+                        "skipped after an earlier timeout for the same backend and scenario"
+                            .to_owned(),
+                    )
+                } else {
+                    invoke_backend(
+                        binary_dir,
+                        backend,
+                        case,
+                        &cli.machine_label,
+                        &environment_snapshot,
+                        &suite_environment,
+                        Duration::from_secs(cli.timeout_seconds),
+                    )?
+                };
+                if record.execution_error.is_some() && !skip {
+                    failed_operations.insert(operation_key);
+                    if matches!(case.operation, Operation::ColdSuggest | Operation::Suggest) {
+                        failed_suggestions.insert(suggestion_key);
+                    }
+                }
                 record.comparison_round = Some(if case.operation == Operation::Quality {
                     case_index
                 } else {
@@ -149,6 +214,7 @@ fn run() -> HarnessResult<()> {
                 record.invocation_order = Some(order);
                 serde_json::to_writer(&mut writer, &record)?;
                 writeln!(writer)?;
+                writer.flush()?;
             }
         }
     }
@@ -172,7 +238,7 @@ where
         .map_err(|_| "arguments must be UTF-8")?;
     if !matches!(
         command.as_str(),
-        "smoke" | "timing" | "scaling" | "quality" | "memory" | "full" | "report"
+        "smoke" | "characterize" | "timing" | "scaling" | "quality" | "memory" | "full" | "report"
     ) {
         return Err(format!("unknown command `{command}`\n{}", usage()).into());
     }
@@ -180,13 +246,19 @@ where
     if command == "report" {
         report_input = args.next().map(PathBuf::from);
     }
+    let timeout_seconds = if command == "characterize" { 10 } else { 120 };
     let mut cli = DriverCli {
         command,
         report_input,
         backend: "all".into(),
         output: None,
         machine_label: "unlabelled".into(),
-        rounds: 8,
+        rounds: 3,
+        samples: None,
+        warmup: None,
+        calibration_ms: None,
+        quality_seeds: 8,
+        timeout_seconds,
         memory_binary_dir: None,
     };
     while let Some(flag) = args.next() {
@@ -210,6 +282,42 @@ where
                     .map_err(|_| "rounds must be UTF-8")?
                     .parse()?
             }
+            "--samples" => {
+                cli.samples = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "samples must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--warmup" => {
+                cli.warmup = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "warmup must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--calibration-ms" => {
+                cli.calibration_ms = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "calibration duration must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--timeout-seconds" => {
+                cli.timeout_seconds = value
+                    .into_string()
+                    .map_err(|_| "timeout must be UTF-8")?
+                    .parse()?
+            }
+            "--quality-seeds" => {
+                cli.quality_seeds = value
+                    .into_string()
+                    .map_err(|_| "quality seed count must be UTF-8")?
+                    .parse()?
+            }
             "--memory-bin-dir" => cli.memory_binary_dir = Some(PathBuf::from(value)),
             _ => return Err(format!("unknown argument `{flag}`\n{}", usage()).into()),
         }
@@ -217,13 +325,30 @@ where
     if cli.rounds == 0 {
         return Err("rounds must be positive".into());
     }
+    if cli.samples == Some(0) {
+        return Err("samples must be positive".into());
+    }
+    if cli.calibration_ms == Some(0) {
+        return Err("calibration duration must be positive".into());
+    }
+    if cli.timeout_seconds == 0 {
+        return Err("timeout must be positive".into());
+    }
+    if cli.quality_seeds == 0 || cli.quality_seeds > QUALITY_SEEDS.len() {
+        return Err(format!(
+            "quality seed count must be between 1 and {}",
+            QUALITY_SEEDS.len()
+        )
+        .into());
+    }
     Ok(cli)
 }
 
 fn usage() -> &'static str {
-    "compare <smoke|timing|scaling|quality|memory|full|report JSONL> \
+    "compare <smoke|characterize|timing|scaling|quality|memory|full|report JSONL> \
      [--backend all|NAME] [--output PATH] [--machine-label LABEL] [--rounds N] \
-     [--memory-bin-dir PATH]"
+     [--samples N] [--warmup N] [--calibration-ms N] [--timeout-seconds N] \
+     [--quality-seeds N] [--memory-bin-dir PATH]"
 }
 
 fn select_backends(selection: &str) -> HarnessResult<Vec<BackendSpec>> {
@@ -250,6 +375,9 @@ fn invoke_backend(
     backend: BackendSpec,
     case: &Case,
     machine_label: &str,
+    environment_snapshot: &str,
+    suite_environment: &Environment,
+    timeout: Duration,
 ) -> HarnessResult<BenchmarkRecord> {
     let binary = dir.join(backend.binary);
     if !binary.is_file() {
@@ -259,7 +387,9 @@ fn invoke_backend(
         )
         .into());
     }
-    let output = Command::new(&binary)
+    let config = run_config(backend, case, machine_label);
+    let mut child = Command::new(&binary)
+        .env(ENVIRONMENT_SNAPSHOT_VAR, environment_snapshot)
         .args([
             "--scenario",
             &case.scenario.to_string(),
@@ -287,6 +417,8 @@ fn invoke_backend(
         .args([
             "--warmup",
             &case.warmup.to_string(),
+            "--calibration-ms",
+            &case.calibration_ms.to_string(),
             "--parzen-history",
             match backend.history {
                 ParzenHistory::Full => "full",
@@ -294,7 +426,21 @@ fn invoke_backend(
             },
         ])
         .args(["--machine-label", machine_label, "--format", "json"])
-        .output()?;
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    if child.wait_timeout(timeout)?.is_none() {
+        child.kill()?;
+        let _ = child.wait_with_output()?;
+        return Ok(BenchmarkRecord::timed_out(
+            backend_name(backend),
+            backend.version,
+            config,
+            suite_environment.clone(),
+            timeout.as_secs(),
+        ));
+    }
+    let output = child.wait_with_output()?;
     if !output.status.success() {
         return Err(format!(
             "{} failed: {}",
@@ -306,6 +452,32 @@ fn invoke_backend(
     Ok(serde_json::from_slice(&output.stdout)?)
 }
 
+fn backend_name(backend: BackendSpec) -> &'static str {
+    if backend.label.starts_with("parzen/") {
+        "parzen"
+    } else {
+        backend.label
+    }
+}
+
+fn run_config(backend: BackendSpec, case: &Case, machine_label: &str) -> RunConfig {
+    RunConfig {
+        scenario: case.scenario,
+        operation: case.operation,
+        history: case.history,
+        dimensions: case.dimensions,
+        iterations: case.iterations,
+        budget: case.budget,
+        seed: case.seed,
+        samples: case.samples,
+        warmup: case.warmup,
+        calibration_ms: case.calibration_ms,
+        profile_seconds: 30,
+        parzen_history: backend.history,
+        machine_label: machine_label.to_owned(),
+    }
+}
+
 fn base_case(scenario: Scenario, operation: Operation) -> Case {
     Case {
         scenario,
@@ -315,8 +487,9 @@ fn base_case(scenario: Scenario, operation: Operation) -> Case {
         budget: 100,
         seed: 42,
         iterations: 0,
-        samples: 10,
-        warmup: 3,
+        samples: 5,
+        warmup: 1,
+        calibration_ms: 100,
     }
 }
 
@@ -329,6 +502,27 @@ fn cases_for(command: &str) -> HarnessResult<Vec<Case>> {
             warmup: 0,
             ..base_case(Scenario::LinearFloat, Operation::Cycle)
         }],
+        "characterize" => Scenario::COMPARATIVE
+            .into_iter()
+            .flat_map(|scenario| {
+                [
+                    Operation::Construct,
+                    Operation::Ingest,
+                    Operation::ColdSuggest,
+                    Operation::Suggest,
+                    Operation::Update,
+                    Operation::Cycle,
+                ]
+                .into_iter()
+                .map(move |operation| Case {
+                    iterations: 1,
+                    samples: 1,
+                    warmup: 0,
+                    calibration_ms: 1,
+                    ..base_case(scenario, operation)
+                })
+            })
+            .collect(),
         "timing" => Scenario::COMPARATIVE
             .into_iter()
             .flat_map(|scenario| {
@@ -409,6 +603,44 @@ fn cases_for(command: &str) -> HarnessResult<Vec<Case>> {
     Ok(cases)
 }
 
+fn print_work_plan(command: &str, cases: &[Case], backend_count: usize, timing_rounds: usize) {
+    let invocations = cases
+        .iter()
+        .map(|case| {
+            let rounds = if matches!(case.operation, Operation::Quality | Operation::Memory) {
+                1
+            } else {
+                timing_rounds
+            };
+            rounds * backend_count
+        })
+        .sum::<usize>();
+    let timed_batch_ms = cases
+        .iter()
+        .filter(|case| case.iterations == 0 && case.operation.is_batchable())
+        .map(|case| case.samples as u128 * case.calibration_ms as u128)
+        .sum::<u128>()
+        * backend_count as u128
+        * timing_rounds as u128;
+    let adaptive_evaluations = cases
+        .iter()
+        .filter(|case| case.operation == Operation::Quality)
+        .map(|case| case.budget)
+        .sum::<usize>()
+        * backend_count;
+    let memory_observations = cases
+        .iter()
+        .filter(|case| case.operation == Operation::Memory)
+        .map(|case| case.history.saturating_add(case.iterations))
+        .sum::<usize>()
+        * backend_count;
+    eprintln!(
+        "plan: {command} has {} cases and {invocations} backend invocations; calibrated timed batches request up to {:.1}s if every selected backend supports every case, excluding calibration and setup; up to {adaptive_evaluations} adaptive quality evaluations and {memory_observations} memory observations",
+        cases.len(),
+        timed_batch_ms as f64 / 1_000.0
+    );
+}
+
 fn default_output_path() -> PathBuf {
     let timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -427,4 +659,42 @@ fn write_report(input: &Path, output: &Path) -> HarnessResult<()> {
     write_markdown(&records, &mut markdown)?;
     fs::write(output, markdown)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn characterization_executes_each_timing_case_once_without_calibration() {
+        let cases = cases_for("characterize").expect("cases");
+        assert_eq!(cases.len(), Scenario::COMPARATIVE.len() * 6);
+        assert!(
+            cases
+                .iter()
+                .all(|case| { case.iterations == 1 && case.samples == 1 && case.warmup == 0 })
+        );
+    }
+
+    #[test]
+    fn routine_timing_defaults_are_smaller_than_curated_protocol() {
+        let cases = cases_for("timing").expect("cases");
+        assert!(
+            cases.iter().all(|case| {
+                case.samples == 5 && case.warmup == 1 && case.calibration_ms == 100
+            })
+        );
+        let cli = parse_cli(["timing"]).expect("CLI");
+        assert_eq!(cli.rounds, 3);
+    }
+
+    #[test]
+    fn driver_overrides_reject_zero_work() {
+        assert!(parse_cli(["timing", "--samples", "0"]).is_err());
+        assert!(parse_cli(["timing", "--calibration-ms", "0"]).is_err());
+        assert!(parse_cli(["timing", "--rounds", "0"]).is_err());
+        assert!(parse_cli(["timing", "--timeout-seconds", "0"]).is_err());
+        assert!(parse_cli(["quality", "--quality-seeds", "0"]).is_err());
+        assert!(parse_cli(["quality", "--quality-seeds", "33"]).is_err());
+    }
 }

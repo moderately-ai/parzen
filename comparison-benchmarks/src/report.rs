@@ -43,12 +43,12 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
             .push(record);
     }
     for ((scenario, operation, history, dimensions, budget), group) in grouped {
-        let parzen_supported = group
-            .iter()
-            .any(|record| record.backend == "parzen" && record.supported);
-        let competitor_supported = group
-            .iter()
-            .any(|record| record.backend != "parzen" && record.supported);
+        let parzen_supported = group.iter().any(|record| {
+            record.backend == "parzen" && record.supported && record.execution_error.is_none()
+        });
+        let competitor_supported = group.iter().any(|record| {
+            record.backend != "parzen" && record.supported && record.execution_error.is_none()
+        });
         if !parzen_supported || !competitor_supported {
             continue;
         }
@@ -110,18 +110,12 @@ fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
     for (backend, group) in records_by_backend(records) {
         let supported = group
             .iter()
-            .filter(|record| record.supported)
+            .filter(|record| record.supported && record.execution_error.is_none())
             .copied()
             .collect::<Vec<_>>();
         if supported.is_empty() {
-            let reason = group
-                .first()
-                .and_then(|record| record.unsupported_reason.as_deref())
-                .unwrap_or("unsupported");
-            writeln!(
-                output,
-                "| {backend} | unsupported: {reason} | — | — | — | — | — |"
-            )?;
+            let status = record_failure_status(&group);
+            writeln!(output, "| {backend} | {status} | — | — | — | — | — |")?;
             continue;
         }
         let min = supported
@@ -154,11 +148,9 @@ fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
 
 fn winner_counts(records: &[&BenchmarkRecord]) -> HashMap<String, usize> {
     let mut rounds = BTreeMap::<usize, Vec<&BenchmarkRecord>>::new();
-    for record in records
-        .iter()
-        .copied()
-        .filter(|record| record.supported && record.timing.is_some())
-    {
+    for record in records.iter().copied().filter(|record| {
+        record.supported && record.execution_error.is_none() && record.timing.is_some()
+    }) {
         rounds
             .entry(record.comparison_round.unwrap_or(0))
             .or_default()
@@ -194,18 +186,12 @@ fn write_quality_table(output: &mut impl Write, records: &[&BenchmarkRecord]) ->
     for (backend, group) in records_by_backend(records) {
         let mut quality = group
             .iter()
-            .filter(|record| record.supported)
+            .filter(|record| record.supported && record.execution_error.is_none())
             .filter_map(|record| record.quality.as_ref())
             .collect::<Vec<_>>();
         if quality.is_empty() {
-            let reason = group
-                .first()
-                .and_then(|record| record.unsupported_reason.as_deref())
-                .unwrap_or("unsupported");
-            writeln!(
-                output,
-                "| {backend} | unsupported: {reason} | — | — | — | — | — | — |"
-            )?;
+            let status = record_failure_status(&group);
+            writeln!(output, "| {backend} | {status} | — | — | — | — | — | — |")?;
             continue;
         }
         let mut regrets = quality
@@ -241,7 +227,10 @@ fn write_memory_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
     )?;
     writeln!(output, "|---|---|---:|---:|---:|---:|---:|")?;
     for (backend, group) in records_by_backend(records) {
-        let memory = group.iter().find_map(|record| record.memory.as_ref());
+        let memory = group
+            .iter()
+            .filter(|record| record.execution_error.is_none())
+            .find_map(|record| record.memory.as_ref());
         if let Some(memory) = memory {
             writeln!(
                 output,
@@ -253,17 +242,27 @@ fn write_memory_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
                 memory.peak_rss_bytes
             )?;
         } else {
-            let reason = group
-                .first()
-                .and_then(|record| record.unsupported_reason.as_deref())
-                .unwrap_or("no memory record");
-            writeln!(
-                output,
-                "| {backend} | unsupported: {reason} | — | — | — | — | — |"
-            )?;
+            let status = record_failure_status(&group);
+            writeln!(output, "| {backend} | {status} | — | — | — | — | — |")?;
         }
     }
     Ok(())
+}
+
+fn record_failure_status(records: &[&BenchmarkRecord]) -> String {
+    if let Some(reason) = records
+        .iter()
+        .find_map(|record| record.execution_error.as_deref())
+    {
+        return format!("timeout: {reason}");
+    }
+    records
+        .iter()
+        .find_map(|record| record.unsupported_reason.as_deref())
+        .map_or_else(
+            || "no successful record".to_owned(),
+            |reason| format!("unsupported: {reason}"),
+        )
 }
 
 fn quantile(sorted: &[f64], q: f64) -> f64 {

@@ -21,9 +21,28 @@ comparison-benchmarks/target/release/compare smoke \
 ```
 
 The driver runs backends serially and rotates their order between rounds. It
-never invokes `cargo run`. Available suites are `smoke`, `timing`, `scaling`,
-`quality`, `memory`, and `full`. Use `--backend all|parzen|parzen/full|parzen/bounded|tpe|hyperopt|optimizer`,
-`--rounds N`, `--machine-label LABEL`, and `--output PATH`.
+never invokes `cargo run`. Before a real suite, characterize every scenario and
+operation once without calibration:
+
+```bash
+comparison-benchmarks/target/release/compare characterize \
+  --machine-label my-machine \
+  --output comparison-benchmarks/results/raw/characterize.jsonl
+```
+
+Available suites are `smoke`, `characterize`, `timing`, `scaling`, `quality`,
+`memory`, and `full`. Use `--backend all|parzen|parzen/full|parzen/bounded|tpe|hyperopt|optimizer`,
+`--rounds N`, `--samples N`, `--warmup N`, `--calibration-ms N`,
+`--timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
+`--output PATH`. The driver prints the case count, backend invocation count,
+calibrated sampling-time floor, quality evaluation count, and memory observation
+count before starting. Characterization limits each child to 10 seconds;
+ordinary suites default to 120 seconds per child and can override that bound
+explicitly. Completed JSONL records are flushed after every child invocation.
+It captures static toolchain, repository, machine, and load preflight data once
+per suite and passes that snapshot to each isolated backend process. Children
+refresh their timestamp and CPU affinity without repeatedly launching diagnostic
+subprocesses that would add wall time and perturb the host.
 
 Regenerate a report deterministically from existing JSONL:
 
@@ -31,16 +50,27 @@ Regenerate a report deterministically from existing JSONL:
 comparison-benchmarks/target/release/compare report results.jsonl --output results.md
 ```
 
-Timing uses `Instant`, three warmups, calibration to at least 250 ms, ten
-internal samples, and eight rotated comparison rounds by default. The primary
-number is the minimum ns/op as a noise-floor estimate; median, mean, standard
-deviation, p90, p95, throughput, raw samples, and round wins remain available.
+Routine timing uses `Instant`, one warmup, calibration to at least 100 ms, five
+internal samples, and three rotated comparison rounds by default. A curated
+checkpoint can request the more expensive protocol explicitly with
+`--warmup 3 --calibration-ms 250 --samples 10 --rounds 8` after characterization
+shows that its cost is justified. The primary number is the minimum ns/op as a
+noise-floor estimate; median, mean, standard deviation, p90, p95, throughput,
+raw samples, and round wins remain available.
 Fixture construction and fixed-history adapter setup are outside the timed
 `cold-suggest`, `suggest`, `update`, and `cycle` loops. Each state-growing sample
 starts from a newly constructed adapter with identical fixture history.
 
+`ingest` and `cold-suggest` are intentionally not auto-batched. Ingest measures
+one complete fixture history per sample. Cold suggestion measures one first
+guided suggestion per sample because batching it would rebuild and ingest an
+untimed history for every measured operation. Automatic update and cycle
+calibration is capped at 100 operations so a sample does not silently turn a
+fixed-history question into a materially different, ever-growing history.
+
 Quality is independent of timing. Each run starts with the same deterministic
-ten-point design and uses one of 32 checked-in seeds. Reports include regret,
+ten-point design. Exploratory suites default to the first 8 of 32 checked-in
+seeds; a curated quality run must request `--quality-seeds 32`. Reports include regret,
 success rate, thresholds, and the complete best-so-far curve. There is no
 combined speed/quality score.
 
