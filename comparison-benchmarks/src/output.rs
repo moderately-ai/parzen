@@ -64,8 +64,11 @@ pub struct Environment {
     pub rustc: String,
     pub target: String,
     pub os: String,
+    pub kernel: String,
     pub architecture: String,
     pub cpu: String,
+    pub cpu_governor: String,
+    pub available_parallelism: usize,
     pub machine_label: String,
     pub uptime: String,
     pub top_processes: String,
@@ -146,8 +149,11 @@ impl Environment {
                 .unwrap_or("unknown")
                 .to_owned(),
             os: std::env::consts::OS.to_owned(),
+            kernel: command_output("uname", &["-srv"]),
             architecture: std::env::consts::ARCH.to_owned(),
             cpu: cpu_name(),
+            cpu_governor: cpu_governor(),
+            available_parallelism: std::thread::available_parallelism().map_or(0, usize::from),
             machine_label: machine_label.to_owned(),
             uptime: command_output("uptime", &[]),
             top_processes: command_output("ps", &["-Ao", "pcpu,pid,comm", "-r"])
@@ -194,7 +200,22 @@ fn cpu_name() -> String {
             return value;
         }
     }
+    if cfg!(target_os = "linux")
+        && let Ok(cpuinfo) = std::fs::read_to_string("/proc/cpuinfo")
+        && let Some(name) = cpuinfo.lines().find_map(|line| {
+            line.split_once(':')
+                .filter(|(key, _)| key.trim() == "model name")
+                .map(|(_, value)| value.trim().to_owned())
+        })
+    {
+        return name;
+    }
     "unknown".to_owned()
+}
+
+fn cpu_governor() -> String {
+    std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
+        .map_or_else(|_| "unknown".to_owned(), |value| value.trim().to_owned())
 }
 
 #[must_use]
