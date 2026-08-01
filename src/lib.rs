@@ -7,43 +7,58 @@
     deny(clippy::unwrap_used, clippy::expect_used, clippy::panic)
 )]
 
-//! Tree-structured Parzen Estimator for Bayesian optimization.
-//!
-//! Implements the TPE algorithm (Bergstra et al., 2011) for categorical
-//! parameter optimization. Used by prompt optimizers like `MIPROv2` to search
-//! over instruction and demo set combinations.
-//!
-//! # Quick Start
+//! High-performance Tree-structured Parzen Estimator optimization.
 //!
 //! ```rust
 //! use parzen::{
-//!     Direction, GammaStrategy, Study, TpeSampler, TpeSamplerConfig, TpeSamplerDeps,
+//!     CategoricalDistribution, Direction, Distribution, SearchSpace, Study,
+//!     TpeSampler, TpeSamplerConfig,
 //! };
 //!
-//! let sampler = TpeSampler::new(
-//!     TpeSamplerDeps { gamma_strategy: GammaStrategy::Default },
-//!     TpeSamplerConfig {
-//!         seed: 42,
-//!         n_startup_trials: 5,
-//!         prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-//!     },
-//! );
-//! let mut study = Study::new(Direction::Maximize, sampler);
+//! # fn main() -> Result<(), parzen::ParzenError> {
+//! let mut space = SearchSpace::new();
+//! space.add("x", Distribution::Categorical(CategoricalDistribution::new(5)?))?;
+//! let sampler = TpeSampler::new(TpeSamplerConfig::performance(42).startup_trials(5))?;
+//! let mut study = Study::new(Direction::Maximize, sampler, space)?;
 //!
 //! for _ in 0..20 {
-//!     let x = study.suggest_categorical("x", 5);
-//!     let score = if x == 2 { 1.0 } else { 0.1 };
-//!     study.complete_trial(score);
+//!     let x = study.suggest_categorical("x")?;
+//!     study.complete_trial(if x == 2 { 1.0 } else { 0.1 })?;
 //! }
-//!
-//! let best = study.best_trial().unwrap();
-//! assert!(best.value > 0.5);
+//! assert!(study.best_value().is_some_and(|value| value > 0.5));
+//! # Ok(()) }
 //! ```
+//!
+//! Explicit parameter groups use one trial-aligned mixture component for the
+//! entire vector. Their joint likelihood is
+//! `logsumexp(log(weight[k]) + sum_d log(kernel[d][k](x[d])))`, preserving
+//! correlations that independent marginal models discard. Integer and stepped
+//! distributions integrate each Gaussian kernel over the selected grid cell
+//! instead of treating a discrete value as a continuous point.
+//!
+//! [`HistoryPolicy::Bounded`] keeps a fixed-size exact best set, recent bad
+//! observations, and a deterministic reservoir, so estimator state and
+//! incremental update work do not grow with completed-trial count. Raw trial
+//! records remain complete. [`HistoryPolicy::Full`] retains exact full-history
+//! ranking and therefore has linear storage and model-construction costs.
 
-pub(crate) mod sampler;
-pub(crate) mod study;
-pub(crate) mod trial;
+mod distribution;
+mod error;
+mod sampler;
+mod search_space;
+mod storage;
+mod study;
+mod trial;
 
-pub use sampler::{GammaStrategy, TpeSampler, TpeSamplerConfig, TpeSamplerDeps};
+pub use distribution::{
+    CategoricalDistribution, Distribution, FloatDistribution, FloatScale, IntDistribution, IntScale,
+};
+pub use error::ParzenError;
+pub use sampler::{
+    GammaStrategy, HistoryPolicy, ModelStrategy, TpeSampler, TpeSamplerConfig, WeightStrategy,
+};
+pub use search_space::{Condition, GroupId, ParamId, ParameterRef, SearchSpace};
 pub use study::Study;
-pub use trial::{Direction, FrozenTrial, ParamValue};
+pub use trial::{
+    Direction, ParamValue, Params, TrialId, TrialInput, TrialRecord, TrialRef, Trials,
+};

@@ -1,9 +1,9 @@
 [package]
 name = "parzen"
-version = "0.1.1"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Tree-structured Parzen Estimator for categorical Bayesian optimization"
+description = "High-performance Tree-structured Parzen Estimator for Bayesian optimization"
 readme = "README.md"
 license = "MIT OR Apache-2.0"
 authors = [
@@ -18,11 +18,25 @@ categories = ["algorithms", "mathematics", "science"]
 exclude = [".github/**", "scripts/**"]
 
 [dependencies]
+hashbrown = "=0.17.1"
+libm = "=0.2.16"
 rand = "=0.9.3"
-serde = { version = "=1.0.228", features = ["derive"] }
+rand_distr = "=0.5.1"
+serde = { version = "=1.0.228", features = ["derive"], optional = true }
+smallvec = "=1.15.1"
 
 [dev-dependencies]
+criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
+proptest = "=1.11.0"
 serde_json = { version = "=1.0.149", features = ["arbitrary_precision"] }
+
+[features]
+default = ["serde"]
+serde = ["dep:serde"]
+
+[[bench]]
+name = "suggestion"
+harness = false
 
 [package.metadata.docs.rs]
 all-features = true

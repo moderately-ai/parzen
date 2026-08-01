@@ -2,338 +2,340 @@
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
-//! Study — manages trials, tracks best results, orchestrates the sampler.
+//! Study orchestration and typed suggestion API.
 
-use std::collections::BTreeMap;
+use smallvec::SmallVec;
 
 use crate::{
-    sampler::TpeSampler,
-    trial::{Direction, FrozenTrial, ParamValue},
+    Condition, Direction, Distribution, ModelStrategy, ParamValue, ParzenError, SearchSpace,
+    TpeSampler, TrialId, TrialInput, TrialRef, Trials, search_space::ParamId,
+    storage::TrialStorage,
 };
 
-/// A Bayesian optimization study that manages trials and tracks the best result.
-///
-/// # Usage
-///
-/// ```rust
-/// use parzen::{
-///     Direction, GammaStrategy, Study, TpeSampler, TpeSamplerConfig, TpeSamplerDeps,
-/// };
-///
-/// let sampler = TpeSampler::new(
-///     TpeSamplerDeps { gamma_strategy: GammaStrategy::Default },
-///     TpeSamplerConfig {
-///         seed: 42,
-///         n_startup_trials: 5,
-///         prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-///     },
-/// );
-/// let mut study = Study::new(Direction::Maximize, sampler);
-///
-/// for _ in 0..20 {
-///     let x = study.suggest_categorical("x", 5);
-///     let y = study.suggest_categorical("y", 3);
-///     let score = if x == 2 && y == 1 { 1.0 } else { 0.1 };
-///     study.complete_trial(score);
-/// }
-///
-/// let best = study.best_trial().unwrap();
-/// println!("Best trial #{}: score {}", best.number, best.value);
-/// ```
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Activation {
+    Active,
+    Inactive,
+    Unresolved,
+}
+
+/// A sequential Bayesian optimization study.
 pub struct Study {
     direction: Direction,
     sampler: TpeSampler,
-    trials: Vec<FrozenTrial>,
-    pending_params: BTreeMap<String, ParamValue>,
+    space: SearchSpace,
+    storage: TrialStorage,
+    pending: SmallVec<[(ParamId, ParamValue); 8]>,
+    best: Option<TrialId>,
 }
 
 impl Study {
-    /// Create a new study with the given optimization direction and sampler.
-    #[must_use]
-    pub const fn new(direction: Direction, sampler: TpeSampler) -> Self {
-        Self {
+    /// Create a study over a non-empty immutable search space.
+    pub fn new(
+        direction: Direction,
+        mut sampler: TpeSampler,
+        space: SearchSpace,
+    ) -> Result<Self, ParzenError> {
+        if space.is_empty() {
+            return Err(ParzenError::InvalidConfig(
+                "search space must not be empty".into(),
+            ));
+        }
+        if let ModelStrategy::Grouped { max_group_size } = sampler.model_strategy() {
+            if space
+                .groups
+                .iter()
+                .any(|group| group.len() > max_group_size)
+            {
+                return Err(ParzenError::InvalidConfig(
+                    "search-space group exceeds sampler group limit".into(),
+                ));
+            }
+        }
+        sampler.initialize(&space);
+        Ok(Self {
             direction,
             sampler,
-            trials: Vec::new(),
-            pending_params: BTreeMap::new(),
+            space,
+            storage: TrialStorage::default(),
+            pending: SmallVec::new(),
+            best: None,
+        })
+    }
+
+    /// Suggest a categorical choice index.
+    pub fn suggest_categorical(&mut self, name: &str) -> Result<u32, ParzenError> {
+        match self.suggest(name, "categorical", |d| {
+            matches!(d, Distribution::Categorical(_))
+        })? {
+            ParamValue::Categorical(value) => Ok(value),
+            _ => Err(ParzenError::ParameterTypeMismatch {
+                name: name.into(),
+                expected: "categorical",
+            }),
         }
     }
 
-    /// Suggest a categorical parameter value for the current trial.
-    ///
-    /// Accumulates parameters internally. Call [`complete_trial`](Self::complete_trial)
-    /// after evaluating to freeze the trial.
-    pub fn suggest_categorical(&mut self, name: &str, num_choices: usize) -> usize {
-        let value =
-            self.sampler
-                .sample_categorical(name, num_choices, &self.trials, self.direction);
-        self.pending_params.insert(
-            name.to_owned(),
-            ParamValue::Categorical(u32::try_from(value).unwrap_or(u32::MAX)),
-        );
-        value
+    /// Suggest a floating-point value.
+    pub fn suggest_float(&mut self, name: &str) -> Result<f64, ParzenError> {
+        match self.suggest(name, "a float", |d| matches!(d, Distribution::Float(_)))? {
+            ParamValue::Float(value) => Ok(value),
+            _ => Err(ParzenError::ParameterTypeMismatch {
+                name: name.into(),
+                expected: "a float",
+            }),
+        }
     }
 
-    /// Complete the current trial with the given objective value.
-    ///
-    /// Freezes accumulated parameters into a [`FrozenTrial`] and returns
-    /// the trial number.
-    pub fn complete_trial(&mut self, value: f64) -> usize {
-        let number = self.trials.len();
-        let params = std::mem::take(&mut self.pending_params);
-        self.trials.push(FrozenTrial {
-            number,
-            params,
-            value,
+    /// Suggest an integer value.
+    pub fn suggest_int(&mut self, name: &str) -> Result<i64, ParzenError> {
+        match self.suggest(name, "an integer", |d| matches!(d, Distribution::Int(_)))? {
+            ParamValue::Int(value) => Ok(value),
+            _ => Err(ParzenError::ParameterTypeMismatch {
+                name: name.into(),
+                expected: "an integer",
+            }),
+        }
+    }
+
+    fn suggest(
+        &mut self,
+        name: &str,
+        expected: &'static str,
+        matches: impl FnOnce(&Distribution) -> bool,
+    ) -> Result<ParamValue, ParzenError> {
+        let id = self.space.id(name)?;
+        let distribution = &self.space.parameters[id.0 as usize].distribution;
+        if !matches(distribution) {
+            return Err(ParzenError::ParameterTypeMismatch {
+                name: name.into(),
+                expected,
+            });
+        }
+        if let Some(value) = self.pending_value(id) {
+            return Ok(value);
+        }
+        match self.activation(id) {
+            Activation::Inactive => return Err(ParzenError::InactiveParameter(name.into())),
+            Activation::Unresolved => return Err(ParzenError::UnresolvedCondition(name.into())),
+            Activation::Active => {}
+        }
+        let group = self.space.parameters[id.0 as usize].group;
+        if let (ModelStrategy::Grouped { .. }, Some(group)) = (self.sampler.model_strategy(), group)
+        {
+            let values = self
+                .sampler
+                .sample_group(group, &self.space, &self.storage)?;
+            for (param, value) in values {
+                if self.pending_value(param).is_none() {
+                    self.pending.push((param, value));
+                }
+            }
+        } else {
+            let value = self.sampler.sample_param(id, &self.space, &self.storage)?;
+            self.pending.push((id, value));
+        }
+        self.pending_value(id)
+            .ok_or_else(|| ParzenError::MissingParameter(name.into()))
+    }
+
+    /// Complete the pending trial with a finite objective.
+    pub fn complete_trial(&mut self, value: f64) -> Result<TrialId, ParzenError> {
+        if !value.is_finite() {
+            return Err(ParzenError::NonFiniteObjective);
+        }
+        if self.pending.is_empty() {
+            return Err(ParzenError::NoPendingTrial);
+        }
+        self.validate_complete(&self.pending)?;
+        self.pending.sort_unstable_by_key(|(id, _)| *id);
+        let id = self
+            .storage
+            .push(&self.pending, value)
+            .ok_or(ParzenError::CapacityOverflow)?;
+        self.pending.clear();
+        self.update_best(id);
+        self.sampler
+            .on_trial_added(id, &self.storage, &self.space, self.direction);
+        Ok(id)
+    }
+
+    /// Clear a pending trial without adding it to history.
+    pub fn abort_trial(&mut self) -> bool {
+        let existed = !self.pending.is_empty();
+        self.pending.clear();
+        existed
+    }
+
+    /// Validate and inject an externally evaluated completed trial.
+    pub fn add_trial(&mut self, input: TrialInput) -> Result<TrialId, ParzenError> {
+        if !self.pending.is_empty() {
+            return Err(ParzenError::PendingTrial);
+        }
+        if !input.value.is_finite() {
+            return Err(ParzenError::NonFiniteObjective);
+        }
+        let mut values: SmallVec<[(ParamId, ParamValue); 8]> =
+            SmallVec::with_capacity(input.params.len());
+        for (name, value) in input.params {
+            let id = self.space.id(&name)?;
+            if values.iter().any(|(existing, _)| *existing == id) {
+                return Err(ParzenError::DuplicateParameter(name));
+            }
+            let Some(value) = self.space.parameters[id.0 as usize]
+                .distribution
+                .canonicalize(value)
+            else {
+                return Err(ParzenError::ValueOutsideDistribution(name));
+            };
+            values.push((id, value));
+        }
+        self.validate_complete(&values)?;
+        values.sort_unstable_by_key(|(id, _)| *id);
+        let id = self
+            .storage
+            .push(&values, input.value)
+            .ok_or(ParzenError::CapacityOverflow)?;
+        self.update_best(id);
+        self.sampler
+            .on_trial_added(id, &self.storage, &self.space, self.direction);
+        Ok(id)
+    }
+
+    fn validate_complete(&self, values: &[(ParamId, ParamValue)]) -> Result<(), ParzenError> {
+        for (index, def) in self.space.parameters.iter().enumerate() {
+            let id = ParamId(index as u32);
+            let actual = values
+                .iter()
+                .find(|(candidate, _)| *candidate == id)
+                .map(|(_, value)| *value);
+            match activation_for(&self.space, id, values) {
+                Activation::Active => {
+                    let Some(value) = actual else {
+                        return Err(ParzenError::MissingParameter(def.name.to_string()));
+                    };
+                    if def.distribution.canonicalize(value) != Some(value) {
+                        return Err(ParzenError::ValueOutsideDistribution(def.name.to_string()));
+                    }
+                }
+                Activation::Inactive => {
+                    if actual.is_some() {
+                        return Err(ParzenError::InactiveParameter(def.name.to_string()));
+                    }
+                }
+                Activation::Unresolved => {
+                    return Err(ParzenError::MissingParameter(def.name.to_string()));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn activation(&self, id: ParamId) -> Activation {
+        activation_for(&self.space, id, &self.pending)
+    }
+    fn pending_value(&self, id: ParamId) -> Option<ParamValue> {
+        self.pending
+            .iter()
+            .find(|(candidate, _)| *candidate == id)
+            .map(|(_, value)| *value)
+    }
+    fn update_best(&mut self, candidate: TrialId) {
+        let better = self.best.is_none_or(|best| {
+            let candidate_value = self.storage.header(candidate).value;
+            let best_value = self.storage.header(best).value;
+            match self.direction {
+                Direction::Maximize => candidate_value > best_value,
+                Direction::Minimize => candidate_value < best_value,
+            }
         });
-        number
-    }
-
-    /// Manually inject a completed trial (e.g., for baseline seeding).
-    ///
-    /// The trial is appended as-is. Its `number` field is not modified.
-    pub fn add_trial(&mut self, trial: FrozenTrial) {
-        self.trials.push(trial);
-    }
-
-    /// The best trial by objective value, according to the study's direction.
-    ///
-    /// Returns `None` if no trials with comparable objective values have been
-    /// completed. Trials whose objective value is NaN are ignored.
-    #[must_use]
-    pub fn best_trial(&self) -> Option<&FrozenTrial> {
-        match self.direction {
-            Direction::Maximize => self
-                .trials
-                .iter()
-                .filter(|trial| !trial.value.is_nan())
-                .max_by(|a, b| a.value.total_cmp(&b.value)),
-            Direction::Minimize => self
-                .trials
-                .iter()
-                .filter(|trial| !trial.value.is_nan())
-                .min_by(|a, b| a.value.total_cmp(&b.value)),
+        if better {
+            self.best = Some(candidate);
         }
     }
 
-    /// The best objective value, according to the study's direction.
+    /// Best trial in constant time.
+    #[must_use]
+    pub fn best_trial(&self) -> Option<TrialRef<'_>> {
+        self.best.map(|id| TrialRef {
+            id,
+            storage: &self.storage,
+            space: &self.space,
+        })
+    }
     #[must_use]
     pub fn best_value(&self) -> Option<f64> {
-        self.best_trial().map(|t| t.value)
+        self.best_trial().map(TrialRef::value)
     }
-
-    /// All completed trials in insertion order.
     #[must_use]
-    pub fn trials(&self) -> &[FrozenTrial] {
-        &self.trials
+    pub fn trial(&self, id: TrialId) -> Option<TrialRef<'_>> {
+        (id.0 < self.storage.len() as u64).then_some(TrialRef {
+            id,
+            storage: &self.storage,
+            space: &self.space,
+        })
     }
-
-    /// Number of completed trials.
+    #[must_use]
+    pub fn trials(&self) -> Trials<'_> {
+        Trials {
+            storage: &self.storage,
+            space: &self.space,
+            front: 0,
+            back: self.storage.len(),
+        }
+    }
     #[must_use]
     pub fn num_trials(&self) -> usize {
-        self.trials.len()
+        self.storage.len()
     }
-
-    /// The optimization direction.
     #[must_use]
     pub const fn direction(&self) -> Direction {
         self.direction
     }
+    #[must_use]
+    pub const fn search_space(&self) -> &SearchSpace {
+        &self.space
+    }
+
+    /// Heap capacity occupied by packed raw trial history.
+    ///
+    /// This excludes the immutable search space, sampler model caches, and allocator metadata.
+    #[must_use]
+    pub fn history_capacity_bytes(&self) -> usize {
+        self.storage.capacity_bytes()
+    }
+
+    /// Number of trial references retained by sampler estimators.
+    ///
+    /// This is bounded independently of completed-trial storage under
+    /// [`HistoryPolicy::Bounded`](crate::HistoryPolicy::Bounded).
+    #[must_use]
+    pub fn estimator_history_len(&self) -> usize {
+        self.sampler.retained_history_len()
+    }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sampler::{GammaStrategy, TpeSamplerConfig, TpeSamplerDeps};
-
-    /// Helper: TpeSampler with the given seed and Optuna defaults.
-    fn sampler_with_seed(seed: u64) -> TpeSampler {
-        TpeSampler::new(
-            TpeSamplerDeps {
-                gamma_strategy: GammaStrategy::Default,
+fn activation_for(
+    space: &SearchSpace,
+    id: ParamId,
+    values: &[(ParamId, ParamValue)],
+) -> Activation {
+    let def = &space.parameters[id.0 as usize];
+    for condition in &def.conditions {
+        let Condition::CategoricalIn { parent, choices } = condition;
+        let parent_value = values
+            .iter()
+            .find(|(candidate, _)| candidate == parent)
+            .map(|(_, value)| *value);
+        match parent_value {
+            Some(ParamValue::Categorical(choice)) if choices.contains(&choice) => {}
+            Some(ParamValue::Categorical(_)) => return Activation::Inactive,
+            Some(_) => return Activation::Inactive,
+            None => match activation_for(space, *parent, values) {
+                Activation::Inactive => return Activation::Inactive,
+                Activation::Active | Activation::Unresolved => return Activation::Unresolved,
             },
-            TpeSamplerConfig {
-                seed,
-                n_startup_trials: TpeSamplerConfig::DEFAULT_N_STARTUP_TRIALS,
-                prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-            },
-        )
-    }
-
-    /// Helper: TpeSampler with an override for `n_startup_trials`.
-    fn sampler_with_startup(seed: u64, n_startup_trials: usize) -> TpeSampler {
-        TpeSampler::new(
-            TpeSamplerDeps {
-                gamma_strategy: GammaStrategy::Default,
-            },
-            TpeSamplerConfig {
-                seed,
-                n_startup_trials,
-                prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-            },
-        )
-    }
-
-    #[test]
-    fn suggest_and_complete_round_trip() {
-        let mut study = Study::new(Direction::Maximize, sampler_with_seed(42));
-
-        let x = study.suggest_categorical("x", 5);
-        assert!(x < 5);
-
-        let trial_num = study.complete_trial(0.8);
-        assert_eq!(trial_num, 0);
-        assert_eq!(study.num_trials(), 1);
-        assert_eq!(
-            study.trials()[0].params["x"],
-            ParamValue::Categorical(u32::try_from(x).unwrap())
-        );
-        assert!((study.trials()[0].value - 0.8).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn best_trial_maximize() {
-        let mut study = Study::new(Direction::Maximize, sampler_with_seed(42));
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.5);
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.9);
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.3);
-
-        let best = study.best_trial().unwrap();
-        assert!((best.value - 0.9).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn best_trial_minimize() {
-        let mut study = Study::new(Direction::Minimize, sampler_with_seed(42));
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.5);
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.1);
-
-        study.suggest_categorical("x", 3);
-        study.complete_trial(0.9);
-
-        let best = study.best_trial().unwrap();
-        assert!((best.value - 0.1).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn empty_study() {
-        let study = Study::new(Direction::Maximize, sampler_with_seed(42));
-        assert!(study.best_trial().is_none());
-        assert!(study.best_value().is_none());
-        assert_eq!(study.num_trials(), 0);
-        assert!(study.trials().is_empty());
-    }
-
-    #[test]
-    fn nan_objectives_are_ignored_for_best_trial() {
-        for direction in [Direction::Maximize, Direction::Minimize] {
-            let mut study = Study::new(direction, sampler_with_seed(42));
-            study.complete_trial(1.0);
-            study.complete_trial(f64::NAN);
-            assert_eq!(study.best_value(), Some(1.0));
-
-            let mut nan_only = Study::new(direction, sampler_with_seed(42));
-            nan_only.complete_trial(f64::NAN);
-            assert!(nan_only.best_trial().is_none());
         }
     }
-
-    #[test]
-    fn add_trial_injected_baseline() {
-        let mut study = Study::new(Direction::Maximize, sampler_with_seed(42));
-
-        // Manually inject a baseline trial (like MIPROv2 does)
-        let baseline = FrozenTrial {
-            number: 0,
-            params: BTreeMap::from([
-                ("instruction".into(), ParamValue::Categorical(0)),
-                ("demos".into(), ParamValue::Categorical(0)),
-            ]),
-            value: 0.6,
-        };
-        study.add_trial(baseline);
-
-        assert_eq!(study.num_trials(), 1);
-        assert!((study.best_value().unwrap() - 0.6).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn multiple_params_per_trial() {
-        let mut study = Study::new(Direction::Maximize, sampler_with_seed(42));
-
-        let x = study.suggest_categorical("instruction", 6);
-        let y = study.suggest_categorical("demos", 4);
-        study.complete_trial(0.75);
-
-        let trial = &study.trials()[0];
-        assert_eq!(
-            trial.params["instruction"],
-            ParamValue::Categorical(u32::try_from(x).unwrap())
-        );
-        assert_eq!(
-            trial.params["demos"],
-            ParamValue::Categorical(u32::try_from(y).unwrap())
-        );
-    }
-
-    #[test]
-    fn multiple_trials_all_stored() {
-        let mut study = Study::new(Direction::Maximize, sampler_with_seed(42));
-
-        for i in 0..10 {
-            study.suggest_categorical("x", 5);
-            study.complete_trial(f64::from(i) * 0.1);
-        }
-
-        assert_eq!(study.num_trials(), 10);
-        assert!((study.best_value().unwrap() - 0.9).abs() < f64::EPSILON);
-    }
-
-    #[test]
-    fn integration_miprov2_pattern() {
-        let sampler = sampler_with_startup(42, 5);
-        let mut study = Study::new(Direction::Maximize, sampler);
-
-        // Inject baseline
-        study.add_trial(FrozenTrial {
-            number: 0,
-            params: BTreeMap::from([
-                ("instruction".into(), ParamValue::Categorical(0)),
-                ("demos".into(), ParamValue::Categorical(0)),
-            ]),
-            value: 0.5,
-        });
-
-        // Run 25 trials with known optimal: instruction=3, demos=2
-        for _ in 0..25 {
-            let inst = study.suggest_categorical("instruction", 6);
-            let demos = study.suggest_categorical("demos", 4);
-            let score = if inst == 3 && demos == 2 {
-                1.0
-            } else if inst == 3 || demos == 2 {
-                0.6
-            } else {
-                0.2
-            };
-            study.complete_trial(score);
-        }
-
-        let best = study.best_trial().unwrap();
-        // Best trial should have found the optimal or near-optimal combination
-        assert!(
-            best.value >= 0.6,
-            "best value should be at least 0.6, got {}",
-            best.value
-        );
-    }
+    Activation::Active
 }

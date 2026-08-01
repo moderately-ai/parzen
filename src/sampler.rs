@@ -1,491 +1,691 @@
-#![expect(
 // Copyright 2026 Thomas Santerre and Moderately AI Inc.
 //
 // SPDX-License-Identifier: MIT OR Apache-2.0
 
+#![expect(
     clippy::cast_precision_loss,
     clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "TPE is a statistical sampler in f64 space. usize <-> f64 conversions are the \
-              core arithmetic (trial counts and category counts feed densities, weights, and \
-              expected-improvement ratios); precision loss above 2^53 would require more \
-              completed trials than anyone will ever run. Covers `.ceil() as usize` in \
-              `gamma()` where the result is clamped to [1, 25] immediately."
+    clippy::cast_sign_loss
 )]
 
-//! TPE (Tree-structured Parzen Estimator) sampler.
-//!
-//! Models `p(x|y)` by splitting trials into "good" and "bad" groups,
-//! estimating per-category densities, and sampling proportional to the
-//! Expected Improvement ratio `l(x) / g(x)`.
+//! TPE sampler configuration and estimators.
 
-use rand::{
-    SeedableRng,
-    distr::{Distribution, weighted::WeightedIndex},
-    rngs::StdRng,
+mod history;
+mod math;
+mod mixture;
+mod workspace;
+
+use std::{num::NonZeroUsize, sync::Arc};
+
+use hashbrown::HashMap;
+use rand::{Rng, SeedableRng, distr::Uniform, rngs::StdRng};
+use smallvec::SmallVec;
+
+use self::{
+    history::{BoundedHistory, FullHistory, RankKey},
+    mixture::ProductMixture,
+    workspace::AcquisitionWorkspace,
+};
+use crate::{
+    Direction, Distribution, ParamValue, ParzenError, SearchSpace, TrialId,
+    search_space::{GroupId, ParamId},
+    storage::TrialStorage,
 };
 
-use crate::trial::{Direction, FrozenTrial, ParamValue};
-
-/// Default gamma function matching Optuna: `min(ceil(0.25 * sqrt(n)), 25)`.
-///
-/// Returns the number of "good" trials given `n` completed trials.
-fn default_gamma(n: usize) -> usize {
-    let g = (0.25 * (n as f64).sqrt()).ceil() as usize;
-    g.clamp(1, 25)
+/// Strategy mapping applicable observation count to good-trial count.
+pub enum GammaStrategy {
+    /// `min(ceil(0.1 * n), 25)`.
+    Optuna,
+    /// `min(ceil(0.25 * sqrt(n)), 25)`.
+    Hyperopt,
+    /// Caller-provided strategy.
+    Custom(Arc<dyn Fn(usize) -> usize + Send + Sync>),
 }
 
-/// Pure-value configuration for [`TpeSampler::new`].
-///
-/// Every field is named at the construction site; `DEFAULT_*` constants
-/// on the impl block carry the Optuna defaults so callers that only
-/// want to override one or two fields can use struct-update syntax.
+impl std::fmt::Debug for GammaStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Optuna => f.write_str("Optuna"),
+            Self::Hyperopt => f.write_str("Hyperopt"),
+            Self::Custom(_) => f.write_str("Custom(..)"),
+        }
+    }
+}
+
+/// Observation weighting strategy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WeightStrategy {
+    Uniform,
+    Optuna,
+}
+
+/// Independent or explicit-group multivariate modeling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ModelStrategy {
+    Independent,
+    Grouped { max_group_size: usize },
+}
+
+/// Amount of estimator history retained.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HistoryPolicy {
+    /// Retain exact full history. Model construction is linear in applicable trials.
+    Full,
+    /// Retain exact best trials and a bounded representative bad set.
+    Bounded {
+        max_good_trials: NonZeroUsize,
+        max_bad_trials: NonZeroUsize,
+        recent_bad_trials: usize,
+    },
+}
+
+/// Validated sampler configuration.
+#[derive(Debug)]
 pub struct TpeSamplerConfig {
-    /// PRNG seed for reproducible runs.
-    pub seed: u64,
-    /// Random startup trials before TPE kicks in. Use
-    /// [`TpeSamplerConfig::DEFAULT_N_STARTUP_TRIALS`] for the Optuna default.
-    pub n_startup_trials: usize,
-    /// Laplace-smoothing prior weight per category. Use
-    /// [`TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT`] for the Optuna default.
-    pub prior_weight: f64,
+    seed: u64,
+    startup_trials: usize,
+    ei_candidates: NonZeroUsize,
+    prior_weight: f64,
+    gamma: GammaStrategy,
+    weights: WeightStrategy,
+    model: ModelStrategy,
+    history: HistoryPolicy,
 }
 
 impl TpeSamplerConfig {
-    /// Optuna default: 10 random startup trials before TPE kicks in.
-    pub const DEFAULT_N_STARTUP_TRIALS: usize = 10;
-    /// Optuna default: prior weight of `1.0`.
-    pub const DEFAULT_PRIOR_WEIGHT: f64 = 1.0;
-}
-
-/// Gamma function strategy: maps `n_completed_trials -> n_good`.
-///
-/// The `Default` variant matches Optuna's
-/// `min(ceil(0.25 * sqrt(n)), 25)`. The `Custom` variant lets callers
-/// inject an alternate function. Modeled as an enum (rather than
-/// `Option<Box<dyn Fn>>` on the config) so the choice is explicit at
-/// the construction site.
-pub enum GammaStrategy {
-    /// Optuna default `min(ceil(0.25 * sqrt(n)), 25)`.
-    Default,
-    /// Caller-supplied function.
-    Custom(Box<dyn Fn(usize) -> usize + Send + Sync>),
-}
-
-impl GammaStrategy {
-    fn into_boxed_fn(self) -> Box<dyn Fn(usize) -> usize + Send + Sync> {
-        match self {
-            Self::Default => Box::new(default_gamma),
-            Self::Custom(f) => f,
+    /// Fast defaults with strictly bounded estimator state.
+    #[must_use]
+    pub fn performance(seed: u64) -> Self {
+        Self {
+            seed,
+            startup_trials: 10,
+            ei_candidates: NonZeroUsize::new(24).unwrap_or(NonZeroUsize::MIN),
+            prior_weight: 1.0,
+            gamma: GammaStrategy::Optuna,
+            weights: WeightStrategy::Uniform,
+            model: ModelStrategy::Independent,
+            history: HistoryPolicy::Bounded {
+                max_good_trials: NonZeroUsize::new(25).unwrap_or(NonZeroUsize::MIN),
+                max_bad_trials: NonZeroUsize::new(512).unwrap_or(NonZeroUsize::MIN),
+                recent_bad_trials: 64,
+            },
         }
+    }
+
+    /// Full-history Optuna-style gamma, weights, and mixture formulation.
+    ///
+    /// This does not promise suggestion-sequence identity with Optuna.
+    #[must_use]
+    pub fn optuna_compatible(seed: u64) -> Self {
+        Self {
+            weights: WeightStrategy::Optuna,
+            history: HistoryPolicy::Full,
+            ..Self::performance(seed)
+        }
+    }
+    #[must_use]
+    pub const fn startup_trials(mut self, value: usize) -> Self {
+        self.startup_trials = value;
+        self
+    }
+    #[must_use]
+    pub const fn ei_candidates(mut self, value: NonZeroUsize) -> Self {
+        self.ei_candidates = value;
+        self
+    }
+    #[must_use]
+    pub const fn prior_weight(mut self, value: f64) -> Self {
+        self.prior_weight = value;
+        self
+    }
+    #[must_use]
+    pub fn gamma(mut self, value: GammaStrategy) -> Self {
+        self.gamma = value;
+        self
+    }
+    #[must_use]
+    pub const fn weights(mut self, value: WeightStrategy) -> Self {
+        self.weights = value;
+        self
+    }
+    #[must_use]
+    pub const fn model(mut self, value: ModelStrategy) -> Self {
+        self.model = value;
+        self
+    }
+    #[must_use]
+    pub const fn history(mut self, value: HistoryPolicy) -> Self {
+        self.history = value;
+        self
     }
 }
 
-/// Injected dependencies for [`TpeSampler`]. Carries the
-/// behaviour-bearing gamma strategy.
-pub struct TpeSamplerDeps {
-    pub gamma_strategy: GammaStrategy,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum EstimatorKey {
+    Param(ParamId),
+    Group(GroupId),
 }
 
-/// TPE sampler for categorical parameters.
-///
-/// During startup (`n < n_startup_trials`), uses uniform random sampling.
-/// After startup, splits completed trials into "good" and "bad" groups
-/// based on the gamma function, estimates per-category densities with
-/// Laplace smoothing, and samples proportional to the EI ratio `l(x)/g(x)`.
+struct Tracker {
+    key: EstimatorKey,
+    params: SmallVec<[ParamId; 8]>,
+    history: BoundedHistory,
+}
+
+enum Histories {
+    Uninitialized,
+    Bounded(Vec<Tracker>),
+    Full(FullHistory),
+}
+
+struct ModelCache {
+    generation: u64,
+    good: ProductMixture,
+    bad: ProductMixture,
+}
+
+/// Seeded Tree-structured Parzen Estimator sampler.
 pub struct TpeSampler {
     rng: StdRng,
-    n_startup_trials: usize,
-    prior_weight: f64,
-    gamma_fn: Box<dyn Fn(usize) -> usize + Send + Sync>,
+    config: TpeSamplerConfig,
+    histories: Histories,
+    caches: HashMap<EstimatorKey, ModelCache>,
+    workspace: AcquisitionWorkspace,
 }
 
 impl TpeSampler {
-    /// Create a new TPE sampler from the given deps and config.
-    #[must_use]
-    pub fn new(deps: TpeSamplerDeps, config: TpeSamplerConfig) -> Self {
-        let TpeSamplerConfig {
-            seed,
-            n_startup_trials,
-            prior_weight,
-        } = config;
-        Self {
-            rng: StdRng::seed_from_u64(seed),
-            n_startup_trials,
-            prior_weight,
-            gamma_fn: deps.gamma_strategy.into_boxed_fn(),
+    /// Validate configuration and create a sampler.
+    pub fn new(config: TpeSamplerConfig) -> Result<Self, ParzenError> {
+        if !config.prior_weight.is_finite() || config.prior_weight <= 0.0 {
+            return Err(ParzenError::InvalidConfig(
+                "prior weight must be finite and positive".into(),
+            ));
         }
-    }
-
-    /// Suggest a categorical parameter value.
-    ///
-    /// During startup: uniform random from `0..num_choices`.
-    /// After startup: TPE-based EI sampling.
-    pub(crate) fn sample_categorical(
-        &mut self,
-        param_name: &str,
-        num_choices: usize,
-        completed_trials: &[FrozenTrial],
-        direction: Direction,
-    ) -> usize {
-        assert!(num_choices > 0, "num_choices must be > 0");
-
-        if num_choices == 1 {
-            return 0;
-        }
-
-        let observed_trials = completed_trials
-            .iter()
-            .filter(|trial| !trial.value.is_nan())
-            .count();
-        if observed_trials == 0 || observed_trials < self.n_startup_trials {
-            return self.sample_uniform(num_choices);
-        }
-
-        self.sample_tpe(param_name, num_choices, completed_trials, direction)
-    }
-
-    /// Uniform random sampling for startup phase.
-    fn sample_uniform(&mut self, num_choices: usize) -> usize {
-        rand::Rng::random_range(&mut self.rng, 0..num_choices)
-    }
-
-    /// TPE-based sampling after startup.
-    fn sample_tpe(
-        &mut self,
-        param_name: &str,
-        num_choices: usize,
-        completed_trials: &[FrozenTrial],
-        direction: Direction,
-    ) -> usize {
-        // NaN is not an objective value and must not influence either density.
-        let mut sorted: Vec<&FrozenTrial> = completed_trials
-            .iter()
-            .filter(|trial| !trial.value.is_nan())
-            .collect();
-        match direction {
-            Direction::Maximize => {
-                sorted.sort_by(|a, b| b.value.total_cmp(&a.value));
-            }
-            Direction::Minimize => {
-                sorted.sort_by(|a, b| a.value.total_cmp(&b.value));
+        if let ModelStrategy::Grouped { max_group_size } = config.model {
+            if !(2..=8).contains(&max_group_size) {
+                return Err(ParzenError::InvalidConfig(
+                    "maximum group size must be between two and eight".into(),
+                ));
             }
         }
+        if let HistoryPolicy::Bounded {
+            max_good_trials,
+            max_bad_trials,
+            recent_bad_trials,
+        } = config.history
+        {
+            let required = recent_bad_trials + max_good_trials.get().saturating_sub(1);
+            if recent_bad_trials > max_bad_trials.get() || max_bad_trials.get() < required {
+                return Err(ParzenError::InvalidConfig(
+                    "bounded bad history must fit recent trials and non-good top entries".into(),
+                ));
+            }
+        }
+        Ok(Self {
+            rng: StdRng::seed_from_u64(config.seed),
+            config,
+            histories: Histories::Uninitialized,
+            caches: HashMap::new(),
+            workspace: AcquisitionWorkspace::default(),
+        })
+    }
 
-        // Split into good and bad
-        let n = sorted.len();
-        let n_good = (self.gamma_fn)(n).clamp(1, n.saturating_sub(1).max(1));
-        let good = &sorted[..n_good];
-        let bad = &sorted[n_good..];
-        let n_bad = bad.len();
+    pub(crate) const fn model_strategy(&self) -> ModelStrategy {
+        self.config.model
+    }
 
-        // Compute EI weights for each choice
-        let prior = self.prior_weight / num_choices as f64;
-        let mut weights = vec![0.0_f64; num_choices];
+    pub(crate) fn initialize(&mut self, space: &SearchSpace) {
+        self.histories = match self.config.history {
+            HistoryPolicy::Full => Histories::Full(FullHistory::default()),
+            HistoryPolicy::Bounded {
+                max_good_trials,
+                max_bad_trials,
+                recent_bad_trials,
+            } => {
+                let definitions = estimator_definitions(self.config.model, space);
+                Histories::Bounded(
+                    definitions
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, (key, params))| Tracker {
+                            key,
+                            params,
+                            history: BoundedHistory::new(
+                                max_good_trials.get(),
+                                max_bad_trials.get(),
+                                recent_bad_trials,
+                                self.config.seed ^ index as u64,
+                            ),
+                        })
+                        .collect(),
+                )
+            }
+        };
+    }
 
-        for (c, weight) in weights.iter_mut().enumerate() {
-            let count_good = count_categorical(good, param_name, c);
-            let count_bad = count_categorical(bad, param_name, c);
+    pub(crate) fn on_trial_added(
+        &mut self,
+        id: TrialId,
+        storage: &TrialStorage,
+        space: &SearchSpace,
+        direction: Direction,
+    ) {
+        let rank = RankKey::new(id, storage.header(id).value, direction, self.config.seed);
+        match &mut self.histories {
+            Histories::Full(history) => history.insert(rank),
+            Histories::Bounded(trackers) => {
+                for tracker in trackers {
+                    if tracker.params.iter().all(|param| {
+                        storage
+                            .typed_value(
+                                id,
+                                *param,
+                                &space.parameters[param.0 as usize].distribution,
+                            )
+                            .is_some()
+                    }) {
+                        tracker.history.insert(rank);
+                    }
+                }
+            }
+            Histories::Uninitialized => {}
+        }
+    }
 
-            let l_c = (count_good as f64 + prior) / (n_good as f64 + self.prior_weight);
-            let g_c = (count_bad as f64 + prior) / (n_bad as f64 + self.prior_weight);
+    pub(crate) fn sample_param(
+        &mut self,
+        param: ParamId,
+        space: &SearchSpace,
+        storage: &TrialStorage,
+    ) -> Result<ParamValue, ParzenError> {
+        let values = self.sample_estimator(EstimatorKey::Param(param), &[param], space, storage)?;
+        values.first().map(|(_, value)| *value).ok_or_else(|| {
+            ParzenError::InternalModel("parameter estimator returned no value".into())
+        })
+    }
 
-            // EI weight = l(c) / g(c)
-            *weight = if g_c > 0.0 { l_c / g_c } else { l_c };
+    pub(crate) fn sample_group(
+        &mut self,
+        group: GroupId,
+        space: &SearchSpace,
+        storage: &TrialStorage,
+    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        self.sample_estimator(
+            EstimatorKey::Group(group),
+            &space.groups[group.0 as usize],
+            space,
+            storage,
+        )
+    }
+
+    fn sample_estimator(
+        &mut self,
+        key: EstimatorKey,
+        params: &[ParamId],
+        space: &SearchSpace,
+        storage: &TrialStorage,
+    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        let generation = self.generation_for(key)?;
+        if self
+            .caches
+            .get(&key)
+            .is_some_and(|cache| cache.generation == generation)
+        {
+            return self.acquire(key);
+        }
+        let (seen, generation, applicable) =
+            self.applicable_history(key, params, space, storage)?;
+        let all_categorical = params.iter().all(|param| {
+            matches!(
+                space.parameters[param.0 as usize].distribution,
+                Distribution::Categorical(_)
+            )
+        });
+        let flat = applicable.first().is_some_and(|first| {
+            applicable
+                .iter()
+                .all(|trial| storage.header(*trial).value == storage.header(*first).value)
+        });
+        if seen < self.config.startup_trials || seen == 0 || (all_categorical && flat) {
+            if all_categorical {
+                return self.sample_unseen_categorical(params, &applicable, space, storage);
+            }
+            return params
+                .iter()
+                .map(|param| {
+                    Ok((
+                        *param,
+                        sample_prior(
+                            &mut self.rng,
+                            &space.parameters[param.0 as usize].distribution,
+                        )?,
+                    ))
+                })
+                .collect();
         }
 
-        // Sample from weighted distribution. Weights are constructed above
-        // as `(count + prior) / (total + prior_weight)` with prior > 0, so
-        // every weight is strictly positive. If WeightedIndex::new ever
-        // fails here, the weight construction invariant has been broken —
-        // fall back to uniform sampling rather than crashing the study.
-        match WeightedIndex::new(&weights) {
-            Ok(dist) => dist.sample(&mut self.rng),
-            Err(_) => self.sample_uniform(num_choices),
+        let good_count = self.good_count(seen)?;
+        let (good_trials, bad_trials) = match &self.histories {
+            Histories::Bounded(trackers) => trackers
+                .iter()
+                .find(|tracker| tracker.key == key)
+                .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into()))?
+                .history
+                .split(good_count),
+            Histories::Full(_) => {
+                let count = good_count.min(applicable.len().saturating_sub(1)).max(1);
+                (applicable[..count].to_vec(), applicable[count..].to_vec())
+            }
+            Histories::Uninitialized => {
+                return Err(ParzenError::InternalModel(
+                    "sampler is not initialized".into(),
+                ));
+            }
+        };
+
+        let good = ProductMixture::build(
+            params,
+            &good_trials,
+            storage,
+            space,
+            self.config.prior_weight,
+            self.config.weights,
+        )?;
+        let bad = ProductMixture::build(
+            params,
+            &bad_trials,
+            storage,
+            space,
+            self.config.prior_weight,
+            self.config.weights,
+        )?;
+        self.caches.insert(
+            key,
+            ModelCache {
+                generation,
+                good,
+                bad,
+            },
+        );
+        self.acquire(key)
+    }
+
+    fn acquire(
+        &mut self,
+        key: EstimatorKey,
+    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        let cache = self
+            .caches
+            .get(&key)
+            .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
+        let mut best_score = f64::NEG_INFINITY;
+        let mut best = None;
+        for _ in 0..self.config.ei_candidates.get() {
+            let candidate = cache.good.sample(&mut self.rng)?;
+            let score = cache
+                .good
+                .log_pdf(&candidate, &mut self.workspace.good_scores)?
+                - cache
+                    .bad
+                    .log_pdf(&candidate, &mut self.workspace.bad_scores)?;
+            if score.is_finite() && score > best_score {
+                best_score = score;
+                best = Some(candidate);
+            }
+        }
+        best.ok_or_else(|| {
+            ParzenError::InternalModel("acquisition produced no finite candidate".into())
+        })
+    }
+
+    fn generation_for(&self, key: EstimatorKey) -> Result<u64, ParzenError> {
+        match &self.histories {
+            Histories::Bounded(trackers) => trackers
+                .iter()
+                .find(|tracker| tracker.key == key)
+                .map(|tracker| tracker.history.generation())
+                .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into())),
+            Histories::Full(history) => Ok(history.generation()),
+            Histories::Uninitialized => Err(ParzenError::InternalModel(
+                "sampler is not initialized".into(),
+            )),
+        }
+    }
+
+    fn applicable_history(
+        &self,
+        key: EstimatorKey,
+        params: &[ParamId],
+        space: &SearchSpace,
+        storage: &TrialStorage,
+    ) -> Result<(usize, u64, Vec<TrialId>), ParzenError> {
+        match &self.histories {
+            Histories::Bounded(trackers) => {
+                let tracker = trackers
+                    .iter()
+                    .find(|tracker| tracker.key == key)
+                    .ok_or_else(|| {
+                        ParzenError::InternalModel("bounded tracker is missing".into())
+                    })?;
+                let (good, bad) = tracker.history.split(tracker.history.seen().min(1));
+                let mut retained = good;
+                retained.extend(bad);
+                Ok((
+                    tracker.history.seen(),
+                    tracker.history.generation(),
+                    retained,
+                ))
+            }
+            Histories::Full(history) => {
+                let applicable: Vec<TrialId> = history
+                    .iter()
+                    .filter(|trial| {
+                        params.iter().all(|param| {
+                            storage
+                                .typed_value(
+                                    *trial,
+                                    *param,
+                                    &space.parameters[param.0 as usize].distribution,
+                                )
+                                .is_some()
+                        })
+                    })
+                    .collect();
+                Ok((applicable.len(), history.generation(), applicable))
+            }
+            Histories::Uninitialized => Err(ParzenError::InternalModel(
+                "sampler is not initialized".into(),
+            )),
+        }
+    }
+
+    fn good_count(&self, seen: usize) -> Result<usize, ParzenError> {
+        if seen <= 1 {
+            return Ok(1);
+        }
+        let requested = match &self.config.gamma {
+            GammaStrategy::Optuna => ((seen as f64 * 0.1).ceil() as usize).min(25),
+            GammaStrategy::Hyperopt => {
+                ((seen as f64).sqrt().mul_add(0.25, 0.0).ceil() as usize).min(25)
+            }
+            GammaStrategy::Custom(function) => function(seen),
+        };
+        if let HistoryPolicy::Bounded {
+            max_good_trials, ..
+        } = self.config.history
+        {
+            if requested > max_good_trials.get() {
+                return Err(ParzenError::GammaExceedsHistoryLimit {
+                    requested,
+                    limit: max_good_trials.get(),
+                });
+            }
+        }
+        Ok(requested.clamp(1, seen - 1))
+    }
+
+    fn sample_unseen_categorical(
+        &mut self,
+        params: &[ParamId],
+        trials: &[TrialId],
+        space: &SearchSpace,
+        storage: &TrialStorage,
+    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        let counts: SmallVec<[u32; 8]> = params
+            .iter()
+            .map(
+                |param| match space.parameters[param.0 as usize].distribution {
+                    Distribution::Categorical(dist) => Ok(dist.num_choices()),
+                    _ => Err(ParzenError::InternalModel(
+                        "non-categorical parameter in categorical startup".into(),
+                    )),
+                },
+            )
+            .collect::<Result<_, _>>()?;
+        let product = counts
+            .iter()
+            .try_fold(1_u64, |total, count| total.checked_mul(u64::from(*count)));
+        let Some(product) = product.filter(|product| *product <= 1_000_000) else {
+            return params
+                .iter()
+                .map(|param| {
+                    Ok((
+                        *param,
+                        sample_prior(
+                            &mut self.rng,
+                            &space.parameters[param.0 as usize].distribution,
+                        )?,
+                    ))
+                })
+                .collect();
+        };
+        let mut seen = hashbrown::HashSet::with_capacity(trials.len());
+        for trial in trials {
+            let mut code = 0_u64;
+            for (param, count) in params.iter().zip(&counts) {
+                let value = storage
+                    .typed_value(
+                        *trial,
+                        *param,
+                        &space.parameters[param.0 as usize].distribution,
+                    )
+                    .and_then(ParamValue::as_categorical)
+                    .ok_or_else(|| {
+                        ParzenError::InternalModel("categorical history is incomplete".into())
+                    })?;
+                code = code * u64::from(*count) + u64::from(value);
+            }
+            seen.insert(code);
+        }
+        let start = if product == 1 {
+            0
+        } else {
+            self.rng.random_range(0..product)
+        };
+        let code = (0..product)
+            .map(|offset| (start + offset) % product)
+            .find(|code| !seen.contains(code))
+            .unwrap_or(start);
+        Ok(decode_categorical(code, params, &counts))
+    }
+
+    pub(crate) fn retained_history_len(&self) -> usize {
+        match &self.histories {
+            Histories::Bounded(trackers) => trackers.iter().map(|t| t.history.retained()).sum(),
+            Histories::Full(history) => history.len(),
+            Histories::Uninitialized => 0,
         }
     }
 }
 
-/// Count how many trials have `param_name == Categorical(choice)`.
-///
-/// Trials that don't contain `param_name` are skipped (not counted).
-fn count_categorical(trials: &[&FrozenTrial], param_name: &str, choice: usize) -> usize {
-    let needle = ParamValue::Categorical(u32::try_from(choice).unwrap_or(u32::MAX));
-    trials
-        .iter()
-        .filter(|t| t.params.get(param_name) == Some(&needle))
-        .count()
+fn estimator_definitions(
+    strategy: ModelStrategy,
+    space: &SearchSpace,
+) -> Vec<(EstimatorKey, SmallVec<[ParamId; 8]>)> {
+    let mut definitions = Vec::new();
+    for (index, def) in space.parameters.iter().enumerate() {
+        let param = ParamId(index as u32);
+        if matches!(strategy, ModelStrategy::Grouped { .. }) && def.group.is_some() {
+            continue;
+        }
+        definitions.push((EstimatorKey::Param(param), smallvec::smallvec![param]));
+    }
+    if matches!(strategy, ModelStrategy::Grouped { .. }) {
+        definitions.extend(space.groups.iter().enumerate().map(|(index, params)| {
+            (
+                EstimatorKey::Group(GroupId(index as u32)),
+                params.iter().copied().collect(),
+            )
+        }));
+    }
+    definitions
+}
+
+fn sample_prior(rng: &mut StdRng, distribution: &Distribution) -> Result<ParamValue, ParzenError> {
+    match distribution {
+        Distribution::Categorical(dist) => Ok(ParamValue::Categorical(
+            rng.random_range(0..dist.num_choices()),
+        )),
+        Distribution::Float(dist) => {
+            if let Some(max_index) = dist.max_step_index() {
+                let index = rng.random_range(0..=max_index);
+                return Ok(ParamValue::Float(dist.grid_value(index)));
+            }
+            let uniform =
+                Uniform::new_inclusive(dist.transform(dist.low()), dist.transform(dist.high()))
+                    .map_err(|_| {
+                        ParzenError::InternalModel("float prior range is invalid".into())
+                    })?;
+            Ok(ParamValue::Float(dist.untransform(rng.sample(uniform))))
+        }
+        Distribution::Int(dist) => {
+            if dist.low() == dist.high() {
+                return Ok(ParamValue::Int(dist.low()));
+            }
+            if dist.scale() == crate::IntScale::Linear {
+                let max_index = dist.max_step_index();
+                let index = if max_index == u64::MAX {
+                    rng.random::<u64>()
+                } else {
+                    rng.random_range(0..=max_index)
+                };
+                return Ok(ParamValue::Int(dist.grid_value(index)));
+            }
+            let low = (dist.low() as f64 - 0.5).ln();
+            let high = (dist.high() as f64 + 0.5).ln();
+            let uniform = Uniform::new_inclusive(low, high).map_err(|_| {
+                ParzenError::InternalModel("log-integer prior range is invalid".into())
+            })?;
+            Ok(ParamValue::Int(dist.untransform(rng.sample(uniform))))
+        }
+    }
+}
+
+fn decode_categorical(
+    mut code: u64,
+    params: &[ParamId],
+    counts: &[u32],
+) -> SmallVec<[(ParamId, ParamValue); 8]> {
+    let mut values = smallvec::smallvec![(ParamId(0), ParamValue::Categorical(0)); params.len()];
+    for index in (0..params.len()).rev() {
+        let choices = u64::from(counts[index]);
+        values[index] = (
+            params[index],
+            ParamValue::Categorical((code % choices) as u32),
+        );
+        code /= choices;
+    }
+    values
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
-
     use super::*;
 
-    /// Helper: TpeSampler with the given seed and Optuna defaults.
-    fn sampler_with_seed(seed: u64) -> TpeSampler {
-        TpeSampler::new(
-            TpeSamplerDeps {
-                gamma_strategy: GammaStrategy::Default,
-            },
-            TpeSamplerConfig {
-                seed,
-                n_startup_trials: TpeSamplerConfig::DEFAULT_N_STARTUP_TRIALS,
-                prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-            },
-        )
-    }
-
-    /// Helper: TpeSampler with an override for `n_startup_trials`.
-    fn sampler_with_startup(seed: u64, n_startup_trials: usize) -> TpeSampler {
-        TpeSampler::new(
-            TpeSamplerDeps {
-                gamma_strategy: GammaStrategy::Default,
-            },
-            TpeSamplerConfig {
-                seed,
-                n_startup_trials,
-                prior_weight: TpeSamplerConfig::DEFAULT_PRIOR_WEIGHT,
-            },
-        )
-    }
-
-    fn make_trial(number: usize, params: &[(&str, usize)], value: f64) -> FrozenTrial {
-        FrozenTrial {
-            number,
-            params: params
-                .iter()
-                .map(|(k, v)| {
-                    (
-                        (*k).to_string(),
-                        ParamValue::Categorical(u32::try_from(*v).unwrap()),
-                    )
-                })
-                .collect(),
-            value,
-        }
-    }
-
     #[test]
-    fn single_choice_always_returns_zero() {
-        let mut sampler = sampler_with_seed(42);
-        for _ in 0..10 {
-            assert_eq!(
-                sampler.sample_categorical("x", 1, &[], Direction::Maximize),
-                0
-            );
-        }
-    }
-
-    #[test]
-    fn zero_startup_trials_samples_uniformly_before_any_observation() {
-        let mut sampler = sampler_with_startup(42, 0);
-        let choice = sampler.sample_categorical("x", 5, &[], Direction::Maximize);
-        assert!(choice < 5);
-    }
-
-    #[test]
-    fn nan_trials_do_not_enter_tpe_densities() {
-        let trials = vec![
-            make_trial(0, &[("x", 0)], f64::NAN),
-            make_trial(1, &[("x", 1)], 1.0),
-        ];
-        let mut sampler = sampler_with_startup(42, 1);
-
-        for _ in 0..10 {
-            assert!(sampler.sample_categorical("x", 2, &trials, Direction::Maximize) < 2);
-        }
-    }
-
-    #[test]
-    fn startup_uses_random_sampling() {
-        let mut seen = [false; 5];
-
-        // Run many startup samples (no completed trials)
-        for seed in 0..100 {
-            let mut s = sampler_with_startup(seed, 5);
-            let choice = s.sample_categorical("x", 5, &[], Direction::Maximize);
-            assert!(choice < 5);
-            seen[choice] = true;
-        }
-
-        // With 100 different seeds, all 5 choices should appear
-        assert!(
-            seen.iter().all(|&s| s),
-            "not all choices appeared during startup"
-        );
-    }
-
-    #[test]
-    fn deterministic_with_seed() {
-        let trials: Vec<FrozenTrial> = (0..15)
-            .map(|i| make_trial(i, &[("x", i % 5)], if i % 5 == 2 { 1.0 } else { 0.1 }))
-            .collect();
-
-        let mut s1 = sampler_with_startup(99, 5);
-        let mut s2 = sampler_with_startup(99, 5);
-
-        for _ in 0..10 {
-            let a = s1.sample_categorical("x", 5, &trials, Direction::Maximize);
-            let b = s2.sample_categorical("x", 5, &trials, Direction::Maximize);
-            assert_eq!(a, b, "same seed must produce same sequence");
-        }
-    }
-
-    #[test]
-    fn converges_to_best_choice_maximize() {
-        // Choice 2 always scores 1.0, others score 0.1
-        let mut trials: Vec<FrozenTrial> = (0..15)
-            .map(|i| make_trial(i, &[("x", i % 5)], if i % 5 == 2 { 1.0 } else { 0.1 }))
-            .collect();
-
-        let mut sampler = sampler_with_startup(42, 5);
-        let mut counts = [0usize; 5];
-
-        // Run 50 more trials, tracking which choices TPE suggests
-        for i in 0..50 {
-            let choice = sampler.sample_categorical("x", 5, &trials, Direction::Maximize);
-            counts[choice] += 1;
-            let value = if choice == 2 { 1.0 } else { 0.1 };
-            trials.push(make_trial(15 + i, &[("x", choice)], value));
-        }
-
-        // Choice 2 should be sampled most often
-        let max_idx = counts
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, c)| **c)
-            .unwrap()
-            .0;
-        assert_eq!(
-            max_idx, 2,
-            "TPE should converge to choice 2, counts: {counts:?}"
-        );
-    }
-
-    #[test]
-    fn converges_to_best_choice_minimize() {
-        // Choice 1 always scores 0.0, others score 1.0
-        let mut trials: Vec<FrozenTrial> = (0..15)
-            .map(|i| make_trial(i, &[("x", i % 5)], if i % 5 == 1 { 0.0 } else { 1.0 }))
-            .collect();
-
-        let mut sampler = sampler_with_startup(42, 5);
-        let mut counts = [0usize; 5];
-
-        for i in 0..50 {
-            let choice = sampler.sample_categorical("x", 5, &trials, Direction::Minimize);
-            counts[choice] += 1;
-            let value = if choice == 1 { 0.0 } else { 1.0 };
-            trials.push(make_trial(15 + i, &[("x", choice)], value));
-        }
-
-        let max_idx = counts
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, c)| **c)
-            .unwrap()
-            .0;
-        assert_eq!(
-            max_idx, 1,
-            "TPE should converge to choice 1 for minimize, counts: {counts:?}"
-        );
-    }
-
-    #[test]
-    fn two_parameters_converge_independently() {
-        // Best: x=3, y=1
-        let mut trials: Vec<FrozenTrial> = (0..20)
-            .map(|i| {
-                let x = i % 5;
-                let y = i % 3;
-                let value = if x == 3 { 0.5 } else { 0.0 } + if y == 1 { 0.5 } else { 0.0 };
-                make_trial(i, &[("x", x), ("y", y)], value)
-            })
-            .collect();
-
-        let mut sampler = sampler_with_startup(42, 10);
-        let mut x_counts = [0usize; 5];
-        let mut y_counts = [0usize; 3];
-
-        for i in 0..50 {
-            let x = sampler.sample_categorical("x", 5, &trials, Direction::Maximize);
-            let y = sampler.sample_categorical("y", 3, &trials, Direction::Maximize);
-            x_counts[x] += 1;
-            y_counts[y] += 1;
-            let value = if x == 3 { 0.5 } else { 0.0 } + if y == 1 { 0.5 } else { 0.0 };
-            trials.push(make_trial(20 + i, &[("x", x), ("y", y)], value));
-        }
-
-        let best_x = x_counts
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, c)| **c)
-            .unwrap()
-            .0;
-        let best_y = y_counts
-            .iter()
-            .enumerate()
-            .max_by_key(|(_, c)| **c)
-            .unwrap()
-            .0;
-        assert_eq!(best_x, 3, "x should converge to 3, counts: {x_counts:?}");
-        assert_eq!(best_y, 1, "y should converge to 1, counts: {y_counts:?}");
-    }
-
-    #[test]
-    fn prior_smoothing_gives_unseen_choices_nonzero_probability() {
-        // All 15 trials chose x=0, scoring 1.0
-        let trials: Vec<FrozenTrial> = (0..15).map(|i| make_trial(i, &[("x", 0)], 1.0)).collect();
-
-        let mut sampler = sampler_with_startup(42, 5);
-        let mut saw_nonzero = false;
-
-        // Over many samples, unseen choices (1, 2, 3, 4) should appear sometimes
-        for _ in 0..200 {
-            let choice = sampler.sample_categorical("x", 5, &trials, Direction::Maximize);
-            if choice != 0 {
-                saw_nonzero = true;
-                break;
-            }
-        }
-
-        assert!(
-            saw_nonzero,
-            "prior smoothing should allow unseen choices to be sampled"
-        );
-    }
-
-    #[test]
-    fn trials_missing_param_are_skipped() {
-        // Some trials have "x", some don't
-        let trials = vec![
-            FrozenTrial {
-                number: 0,
-                params: BTreeMap::from([("x".into(), ParamValue::Categorical(2))]),
-                value: 1.0,
-            },
-            FrozenTrial {
-                number: 1,
-                params: BTreeMap::new(), // no "x" param
-                value: 0.5,
-            },
-        ];
-
-        // Should not panic
-        let mut sampler = sampler_with_startup(42, 0);
-        let _choice = sampler.sample_categorical("x", 5, &trials, Direction::Maximize);
-    }
-
-    #[test]
-    fn default_gamma_values() {
-        assert_eq!(default_gamma(1), 1);
-        assert_eq!(default_gamma(4), 1);
-        assert_eq!(default_gamma(6), 1); // MIPROv2 light
-        assert_eq!(default_gamma(12), 1); // MIPROv2 medium
-        assert_eq!(default_gamma(18), 2); // MIPROv2 heavy
-        assert_eq!(default_gamma(100), 3);
-        assert_eq!(default_gamma(10000), 25);
+    fn gamma_strategies_match_named_formulas() {
+        let sampler = TpeSampler::new(TpeSamplerConfig::performance(1)).unwrap();
+        assert_eq!(sampler.good_count(100).unwrap(), 10);
+        assert_eq!(((100_f64.sqrt() * 0.25).ceil() as usize).min(25), 3);
     }
 }

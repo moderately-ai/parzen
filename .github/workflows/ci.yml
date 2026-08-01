@@ -34,7 +34,9 @@ jobs:
       - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094
         with:
           tool: nextest
-      - run: cargo nextest run --all-targets --locked
+      - run: cargo nextest run --all-targets --all-features --locked
+      - run: cargo check --no-default-features --locked
+      - run: cargo test --no-default-features --locked
 
   quality:
     runs-on: ubuntu-latest
@@ -50,7 +52,11 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-bin: false
+      - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094
+        with:
+          tool: addlicense
       - run: cargo fmt --all -- --check
+      - run: ./scripts/license-headers.sh check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
       - name: Documentation
         env:
@@ -60,6 +66,14 @@ jobs:
         env:
           RUSTDOCFLAGS: -D warnings
         run: cargo test --doc --all-features --locked
+      - name: Statistical optimizer quality
+        run: cargo test --test quality --release --locked
+      - name: Release bounded-history capacity
+        run: cargo test --release sampler::history::tests::bounded_history_retains_exact_top_and_constant_capacity --locked
+      - name: Packaged serde validation
+        run: |
+          cargo package --locked
+          cargo test --manifest-path target/package/parzen-0.2.0/Cargo.toml --locked deserialization_cannot_bypass_distribution_validation
 
   supply-chain:
     runs-on: ubuntu-latest
