@@ -78,6 +78,9 @@ struct DriverCli {
     backend: String,
     output: Option<PathBuf>,
     machine_label: String,
+    scenario: Option<Scenario>,
+    operation: Option<Operation>,
+    history: Option<usize>,
     rounds: usize,
     samples: Option<usize>,
     warmup: Option<usize>,
@@ -125,7 +128,18 @@ fn run() -> HarnessResult<()> {
         .ok_or("compare executable has no parent directory")?
         .to_owned();
     let mut cases = cases_for(&cli.command)?;
+    cases.retain(|case| {
+        cli.scenario
+            .is_none_or(|scenario| case.scenario == scenario)
+    });
+    cases.retain(|case| {
+        cli.operation
+            .is_none_or(|operation| case.operation == operation)
+    });
     for case in &mut cases {
+        if let Some(history) = cli.history {
+            case.history = history;
+        }
         if let Some(samples) = cli.samples {
             case.samples = samples;
         }
@@ -140,6 +154,9 @@ fn run() -> HarnessResult<()> {
         case.operation != Operation::Quality
             || QUALITY_SEEDS[..cli.quality_seeds].contains(&case.seed)
     });
+    if cases.is_empty() {
+        return Err("the selected filters produced no benchmark cases".into());
+    }
     let timing_rounds = if matches!(cli.command.as_str(), "smoke" | "characterize") {
         1
     } else {
@@ -253,6 +270,9 @@ where
         backend: "all".into(),
         output: None,
         machine_label: "unlabelled".into(),
+        scenario: None,
+        operation: None,
+        history: None,
         rounds: 3,
         samples: None,
         warmup: None,
@@ -275,6 +295,30 @@ where
                 cli.machine_label = value
                     .into_string()
                     .map_err(|_| "machine label must be UTF-8")?
+            }
+            "--scenario" => {
+                cli.scenario = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "scenario must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--operation" => {
+                cli.operation = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "operation must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--history" => {
+                cli.history = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "history must be UTF-8")?
+                        .parse()?,
+                )
             }
             "--rounds" => {
                 cli.rounds = value
@@ -325,6 +369,9 @@ where
     if cli.rounds == 0 {
         return Err("rounds must be positive".into());
     }
+    if cli.history == Some(0) {
+        return Err("history must be positive".into());
+    }
     if cli.samples == Some(0) {
         return Err("samples must be positive".into());
     }
@@ -346,7 +393,8 @@ where
 
 fn usage() -> &'static str {
     "compare <smoke|characterize|timing|scaling|quality|memory|full|report JSONL> \
-     [--backend all|NAME] [--output PATH] [--machine-label LABEL] [--rounds N] \
+     [--backend all|NAME] [--scenario NAME] [--operation NAME] [--history N] \
+     [--output PATH] [--machine-label LABEL] [--rounds N] \
      [--samples N] [--warmup N] [--calibration-ms N] [--timeout-seconds N] \
      [--quality-seeds N] [--memory-bin-dir PATH]"
 }
@@ -696,5 +744,23 @@ mod tests {
         assert!(parse_cli(["timing", "--timeout-seconds", "0"]).is_err());
         assert!(parse_cli(["quality", "--quality-seeds", "0"]).is_err());
         assert!(parse_cli(["quality", "--quality-seeds", "33"]).is_err());
+        assert!(parse_cli(["timing", "--history", "0"]).is_err());
+    }
+
+    #[test]
+    fn driver_parses_case_filters() {
+        let cli = parse_cli([
+            "timing",
+            "--scenario",
+            "independent-float",
+            "--operation",
+            "suggest",
+            "--history",
+            "100",
+        ])
+        .expect("CLI");
+        assert_eq!(cli.scenario, Some(Scenario::IndependentFloat));
+        assert_eq!(cli.operation, Some(Operation::Suggest));
+        assert_eq!(cli.history, Some(100));
     }
 }

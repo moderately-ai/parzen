@@ -34,7 +34,9 @@ Available suites are `smoke`, `characterize`, `timing`, `scaling`, `quality`,
 `memory`, and `full`. Use `--backend all|parzen|parzen/full|parzen/bounded|tpe|hyperopt|optimizer`,
 `--rounds N`, `--samples N`, `--warmup N`, `--calibration-ms N`,
 `--timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
-`--output PATH`. The driver prints the case count, backend invocation count,
+`--output PATH`. Use `--scenario NAME`, `--operation NAME`, and `--history N`
+to run a focused subset without changing the suite definitions. The driver
+prints the case count, backend invocation count,
 calibrated sampling-time floor, quality evaluation count, and memory observation
 count before starting. Characterization limits each child to 10 seconds;
 ordinary suites default to 120 seconds per child and can override that bound
