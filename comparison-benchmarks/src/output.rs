@@ -68,6 +68,7 @@ pub struct Environment {
     pub architecture: String,
     pub cpu: String,
     pub cpu_governor: String,
+    pub cpu_affinity: String,
     pub available_parallelism: usize,
     pub machine_label: String,
     pub uptime: String,
@@ -153,6 +154,7 @@ impl Environment {
             architecture: std::env::consts::ARCH.to_owned(),
             cpu: cpu_name(),
             cpu_governor: cpu_governor(),
+            cpu_affinity: cpu_affinity(),
             available_parallelism: std::thread::available_parallelism().map_or(0, usize::from),
             machine_label: machine_label.to_owned(),
             uptime: command_output("uptime", &[]),
@@ -216,6 +218,18 @@ fn cpu_name() -> String {
 fn cpu_governor() -> String {
     std::fs::read_to_string("/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor")
         .map_or_else(|_| "unknown".to_owned(), |value| value.trim().to_owned())
+}
+
+fn cpu_affinity() -> String {
+    std::fs::read_to_string("/proc/self/status")
+        .ok()
+        .and_then(|status| {
+            status
+                .lines()
+                .find_map(|line| line.strip_prefix("Cpus_allowed_list:\t"))
+                .map(str::to_owned)
+        })
+        .unwrap_or_else(|| "unknown".to_owned())
 }
 
 #[must_use]
