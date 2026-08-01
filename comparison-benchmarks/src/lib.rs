@@ -7,6 +7,7 @@ pub mod fixtures;
 pub mod measurement;
 pub mod objectives;
 pub mod output;
+pub mod report;
 pub mod scenarios;
 
 use std::error::Error;
