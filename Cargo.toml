@@ -2,7 +2,7 @@
 name = "parzen"
 version = "0.2.0"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "High-performance Tree-structured Parzen Estimator for Bayesian optimization"
 readme = "README.md"
 license = "MIT OR Apache-2.0"

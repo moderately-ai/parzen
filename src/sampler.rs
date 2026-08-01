@@ -201,12 +201,12 @@ impl TpeSampler {
                 "prior weight must be finite and positive".into(),
             ));
         }
-        if let ModelStrategy::Grouped { max_group_size } = config.model {
-            if !(2..=8).contains(&max_group_size) {
-                return Err(ParzenError::InvalidConfig(
-                    "maximum group size must be between two and eight".into(),
-                ));
-            }
+        if let ModelStrategy::Grouped { max_group_size } = config.model
+            && !(2..=8).contains(&max_group_size)
+        {
+            return Err(ParzenError::InvalidConfig(
+                "maximum group size must be between two and eight".into(),
+            ));
         }
         if let HistoryPolicy::Bounded {
             max_good_trials,
@@ -513,13 +513,12 @@ impl TpeSampler {
         if let HistoryPolicy::Bounded {
             max_good_trials, ..
         } = self.config.history
+            && requested > max_good_trials.get()
         {
-            if requested > max_good_trials.get() {
-                return Err(ParzenError::GammaExceedsHistoryLimit {
-                    requested,
-                    limit: max_good_trials.get(),
-                });
-            }
+            return Err(ParzenError::GammaExceedsHistoryLimit {
+                requested,
+                limit: max_good_trials.get(),
+            });
         }
         Ok(requested.clamp(1, seen - 1))
     }

@@ -41,16 +41,15 @@ impl Study {
                 "search space must not be empty".into(),
             ));
         }
-        if let ModelStrategy::Grouped { max_group_size } = sampler.model_strategy() {
-            if space
+        if let ModelStrategy::Grouped { max_group_size } = sampler.model_strategy()
+            && space
                 .groups
                 .iter()
                 .any(|group| group.len() > max_group_size)
-            {
-                return Err(ParzenError::InvalidConfig(
-                    "search-space group exceeds sampler group limit".into(),
-                ));
-            }
+        {
+            return Err(ParzenError::InvalidConfig(
+                "search-space group exceeds sampler group limit".into(),
+            ));
         }
         sampler.initialize(&space);
         Ok(Self {

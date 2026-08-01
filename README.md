@@ -81,4 +81,4 @@ while deserializing, rejects unknown distribution fields, and can be disabled wi
 
 See [MIGRATING-0.1-TO-0.2.md](MIGRATING-0.1-TO-0.2.md) for the v0.1 migration guide.
 
-MSRV: Rust 1.88. Licensed under either MIT or Apache-2.0 at your option.
+MSRV: Rust 1.89. Licensed under either MIT or Apache-2.0 at your option.

@@ -105,10 +105,10 @@ impl BoundedHistory {
         let position = self.top.binary_search(&rank).unwrap_or_else(|index| index);
         if position < self.max_good {
             self.top.insert(position, rank);
-            if self.top.len() > self.max_good {
-                if let Some(displaced) = self.top.pop() {
-                    self.offer_reservoir(displaced);
-                }
+            if self.top.len() > self.max_good
+                && let Some(displaced) = self.top.pop()
+            {
+                self.offer_reservoir(displaced);
             }
         } else {
             self.push_recent(rank);
@@ -121,10 +121,10 @@ impl BoundedHistory {
             return;
         }
         self.recent.push_back(rank);
-        if self.recent.len() > self.recent_capacity {
-            if let Some(expired) = self.recent.pop_front() {
-                self.offer_reservoir(expired);
-            }
+        if self.recent.len() > self.recent_capacity
+            && let Some(expired) = self.recent.pop_front()
+        {
+            self.offer_reservoir(expired);
         }
     }
 

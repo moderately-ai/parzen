@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Raise the minimum supported Rust version from 1.88 to 1.89.
+
 ## [0.2.0] - 2026-07-31
 
 - Add validated categorical, float, log-float, integer, stepped-integer, and log-integer distributions.
