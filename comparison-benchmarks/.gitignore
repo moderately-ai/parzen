@@ -1,0 +1,12 @@
+/target/
+/target-memory/
+/results/raw/
+*.profile.json
+*.profile.json.gz
+*.profile.json.syms.json
+dhat-heap.json
+*.dhat.json
+*.trace
+*.instruments
+*.flamegraph.svg
+*.collapsed

@@ -15,7 +15,7 @@ homepage = "https://github.com/moderately-ai/parzen"
 documentation = "https://docs.rs/parzen"
 keywords = ["optimization", "bayesian", "tpe", "hyperparameter", "search"]
 categories = ["algorithms", "mathematics", "science"]
-exclude = [".github/**", "scripts/**"]
+exclude = [".github/**", "comparison-benchmarks/**", "scripts/**"]
 
 [dependencies]
 hashbrown = "=0.17.1"
