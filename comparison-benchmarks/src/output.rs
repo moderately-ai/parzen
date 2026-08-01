@@ -158,7 +158,7 @@ impl Environment {
             available_parallelism: std::thread::available_parallelism().map_or(0, usize::from),
             machine_label: machine_label.to_owned(),
             uptime: command_output("uptime", &[]),
-            top_processes: command_output("ps", &["-Ao", "pcpu,pid,comm", "-r"])
+            top_processes: top_processes()
                 .lines()
                 .take(16)
                 .collect::<Vec<_>>()
@@ -230,6 +230,14 @@ fn cpu_affinity() -> String {
                 .map(str::to_owned)
         })
         .unwrap_or_else(|| "unknown".to_owned())
+}
+
+fn top_processes() -> String {
+    if cfg!(target_os = "linux") {
+        command_output("ps", &["-Ao", "pcpu,pid,comm", "--sort=-pcpu"])
+    } else {
+        command_output("ps", &["-Ao", "pcpu,pid,comm", "-r"])
+    }
 }
 
 #[must_use]
