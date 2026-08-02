@@ -25,6 +25,16 @@ impl CandidateBatch {
         self.good_scores.reserve(candidates);
         self.bad_scores.reserve(candidates);
     }
+
+    pub(crate) fn previous_duplicate(&self, index: usize) -> Option<usize> {
+        if self.dimensions != 1 || index >= self.candidates {
+            return None;
+        }
+        let value = self.values[index];
+        self.values[..index]
+            .iter()
+            .position(|candidate| *candidate == value)
+    }
 }
 
 pub(crate) struct AcquisitionWorkspace {
@@ -42,5 +52,26 @@ impl AcquisitionWorkspace {
             candidates: CandidateBatch::default(),
             history: HistoryWorkspace::new(max_good, max_bad),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn one_dimensional_batch_finds_previous_duplicate() {
+        let mut batch = CandidateBatch::default();
+        batch.clear(4, 1);
+        batch.values.extend([
+            ParamValue::Int(3),
+            ParamValue::Int(7),
+            ParamValue::Int(3),
+            ParamValue::Int(3),
+        ]);
+        assert_eq!(batch.previous_duplicate(0), None);
+        assert_eq!(batch.previous_duplicate(1), None);
+        assert_eq!(batch.previous_duplicate(2), Some(0));
+        assert_eq!(batch.previous_duplicate(3), Some(0));
     }
 }

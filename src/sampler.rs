@@ -459,12 +459,24 @@ impl TpeSampler {
             .chunks_exact(dimensions)
             .enumerate()
         {
-            let good = cache
-                .good
-                .log_pdf_positional(candidate, &mut self.workspace.good_components)?;
-            let bad = cache
-                .bad
-                .log_pdf_positional(candidate, &mut self.workspace.bad_components)?;
+            let duplicate = matches!(candidate, [ParamValue::Int(_)])
+                .then(|| self.workspace.candidates.previous_duplicate(index))
+                .flatten();
+            let (good, bad) = if let Some(previous) = duplicate {
+                (
+                    self.workspace.candidates.good_scores[previous],
+                    self.workspace.candidates.bad_scores[previous],
+                )
+            } else {
+                (
+                    cache
+                        .good
+                        .log_pdf_positional(candidate, &mut self.workspace.good_components)?,
+                    cache
+                        .bad
+                        .log_pdf_positional(candidate, &mut self.workspace.bad_components)?,
+                )
+            };
             self.workspace.candidates.good_scores.push(good);
             self.workspace.candidates.bad_scores.push(bad);
             let score = good - bad;

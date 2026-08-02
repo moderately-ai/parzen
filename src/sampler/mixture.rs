@@ -29,6 +29,7 @@ struct NumericKernels {
     means: Vec<f64>,
     sigmas: Vec<f64>,
     inverse_sigmas: Vec<f64>,
+    log_inverse_sigmas: Vec<f64>,
     log_normalizers: Vec<f64>,
     log_coefficients: Vec<f64>,
     adapted_low: f64,
@@ -407,6 +408,7 @@ impl NumericKernels {
             means: Vec::new(),
             sigmas: Vec::new(),
             inverse_sigmas: Vec::new(),
+            log_inverse_sigmas: Vec::new(),
             log_normalizers: Vec::new(),
             log_coefficients: Vec::new(),
             adapted_low,
@@ -483,6 +485,9 @@ impl NumericKernels {
         self.inverse_sigmas.clear();
         self.inverse_sigmas
             .extend(self.sigmas.iter().map(|sigma| sigma.recip()));
+        self.log_inverse_sigmas.clear();
+        self.log_inverse_sigmas
+            .extend(self.inverse_sigmas.iter().map(|inverse| inverse.ln()));
         self.log_normalizers.clear();
         self.log_normalizers
             .extend(
@@ -540,7 +545,7 @@ impl NumericKernels {
                 let inverse = self.inverse_sigmas[component];
                 let standardized_low = (left - self.means[component]) * inverse;
                 let standardized_high = (right - self.means[component]) * inverse;
-                let standardized_width = log_width + inverse.ln();
+                let standardized_width = log_width + self.log_inverse_sigmas[component];
                 let log_mass = if standardized_low < standardized_high
                     && standardized_width >= -11.512_925_464_970_229
                 {
