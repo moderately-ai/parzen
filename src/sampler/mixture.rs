@@ -11,7 +11,7 @@ use smallvec::SmallVec;
 use super::{WeightStrategy, math};
 use crate::{
     Distribution, FloatDistribution, IntDistribution, ParamValue, ParzenError, SearchSpace,
-    TrialId, search_space::ParamId, storage::TrialStorage,
+    TrialId, search_space::ParamId,
 };
 
 enum KernelSet {
@@ -97,15 +97,18 @@ impl ProductMixture {
         })
     }
 
-    pub(crate) fn rebuild(
+    pub(crate) fn rebuild<F>(
         &mut self,
         trials: &[TrialId],
-        storage: &TrialStorage,
         space: &SearchSpace,
         prior_weight: f64,
         weights: WeightStrategy,
         workspace: &mut ModelBuildWorkspace,
-    ) -> Result<(), ParzenError> {
+        mut value_for: F,
+    ) -> Result<(), ParzenError>
+    where
+        F: FnMut(TrialId, ParamId, &Distribution) -> Option<ParamValue>,
+    {
         let component_count = trials.len() + 1;
         workspace.component_weights.clear();
         workspace.component_weights.extend(
@@ -140,15 +143,11 @@ impl ProductMixture {
             for trial in trials {
                 workspace
                     .values
-                    .push(
-                        storage
-                            .typed_value(*trial, *param, definition)
-                            .ok_or_else(|| {
-                                ParzenError::InternalModel(
-                                    "retained trial is missing an estimator parameter".into(),
-                                )
-                            })?,
-                    );
+                    .push(value_for(*trial, *param, definition).ok_or_else(|| {
+                        ParzenError::InternalModel(
+                            "retained trial is missing an estimator parameter".into(),
+                        )
+                    })?);
             }
             match (kernel, definition) {
                 (

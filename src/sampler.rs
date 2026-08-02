@@ -245,7 +245,7 @@ impl TpeSampler {
 
     pub(crate) fn initialize(&mut self, space: &SearchSpace) {
         self.histories = match self.config.history {
-            HistoryPolicy::Full => Histories::Full(FullHistory::default()),
+            HistoryPolicy::Full => Histories::Full(FullHistory::new(space.parameters.len())),
             HistoryPolicy::Bounded {
                 max_good_trials,
                 max_bad_trials,
@@ -281,7 +281,7 @@ impl TpeSampler {
     ) {
         let rank = RankKey::new(id, storage.header(id).value, direction, self.config.seed);
         match &mut self.histories {
-            Histories::Full(history) => history.insert(rank),
+            Histories::Full(history) => history.insert(rank, storage, space),
             Histories::Bounded(trackers) => {
                 for tracker in trackers {
                     if tracker.params.iter().all(|param| {
@@ -349,7 +349,7 @@ impl TpeSampler {
             )
         });
         let (seen, generation, applicable) =
-            self.applicable_history(key, params, space, storage, all_categorical)?;
+            self.applicable_history(key, params, all_categorical)?;
         let flat = all_categorical
             && applicable.first().is_some_and(|first| {
                 applicable
@@ -414,22 +414,49 @@ impl TpeSampler {
             .caches
             .get_mut(&key)
             .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
-        cache.good.rebuild(
-            good_trials,
-            storage,
-            space,
-            self.config.prior_weight,
-            self.config.weights,
-            &mut cache.workspace,
-        )?;
-        cache.bad.rebuild(
-            bad_trials,
-            storage,
-            space,
-            self.config.prior_weight,
-            self.config.weights,
-            &mut cache.workspace,
-        )?;
+        match &self.histories {
+            Histories::Full(history) => {
+                cache.good.rebuild(
+                    good_trials,
+                    space,
+                    self.config.prior_weight,
+                    self.config.weights,
+                    &mut cache.workspace,
+                    |trial, param, _| history.typed_value(trial, param),
+                )?;
+                cache.bad.rebuild(
+                    bad_trials,
+                    space,
+                    self.config.prior_weight,
+                    self.config.weights,
+                    &mut cache.workspace,
+                    |trial, param, _| history.typed_value(trial, param),
+                )?;
+            }
+            Histories::Bounded(_) => {
+                cache.good.rebuild(
+                    good_trials,
+                    space,
+                    self.config.prior_weight,
+                    self.config.weights,
+                    &mut cache.workspace,
+                    |trial, param, distribution| storage.typed_value(trial, param, distribution),
+                )?;
+                cache.bad.rebuild(
+                    bad_trials,
+                    space,
+                    self.config.prior_weight,
+                    self.config.weights,
+                    &mut cache.workspace,
+                    |trial, param, distribution| storage.typed_value(trial, param, distribution),
+                )?;
+            }
+            Histories::Uninitialized => {
+                return Err(ParzenError::InternalModel(
+                    "sampler is not initialized".into(),
+                ));
+            }
+        }
         cache.generation = generation;
         self.acquire(key)
     }
@@ -512,8 +539,6 @@ impl TpeSampler {
         &self,
         key: EstimatorKey,
         params: &[ParamId],
-        space: &SearchSpace,
-        storage: &TrialStorage,
         materialize_bounded: bool,
     ) -> Result<(usize, u64, Vec<TrialId>), ParzenError> {
         match &self.histories {
@@ -540,15 +565,9 @@ impl TpeSampler {
                 let applicable: Vec<TrialId> = history
                     .iter()
                     .filter(|trial| {
-                        params.iter().all(|param| {
-                            storage
-                                .typed_value(
-                                    *trial,
-                                    *param,
-                                    &space.parameters[param.0 as usize].distribution,
-                                )
-                                .is_some()
-                        })
+                        params
+                            .iter()
+                            .all(|param| history.typed_value(*trial, *param).is_some())
                     })
                     .collect();
                 Ok((applicable.len(), history.generation(), applicable))

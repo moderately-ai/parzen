@@ -7,7 +7,9 @@ use std::{
     collections::{BTreeSet, BinaryHeap, VecDeque},
 };
 
-use crate::{Direction, TrialId};
+use crate::{
+    Direction, ParamValue, SearchSpace, TrialId, search_space::ParamId, storage::TrialStorage,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RankKey {
@@ -209,14 +211,36 @@ impl BoundedHistory {
     }
 }
 
-#[derive(Default)]
 pub(crate) struct FullHistory {
     generation: u64,
     ranks: BTreeSet<RankKey>,
+    columns: Vec<Vec<Option<ParamValue>>>,
 }
 
 impl FullHistory {
-    pub(crate) fn insert(&mut self, rank: RankKey) {
+    pub(crate) fn new(param_count: usize) -> Self {
+        Self {
+            generation: 0,
+            ranks: BTreeSet::new(),
+            columns: (0..param_count).map(|_| Vec::new()).collect(),
+        }
+    }
+
+    pub(crate) fn insert(&mut self, rank: RankKey, storage: &TrialStorage, space: &SearchSpace) {
+        let trial_index = rank.trial.0 as usize;
+        for (index, column) in self.columns.iter_mut().enumerate() {
+            if column.len() < trial_index {
+                column.resize(trial_index, None);
+            }
+            let param = ParamId(index as u32);
+            let value =
+                storage.typed_value(rank.trial, param, &space.parameters[index].distribution);
+            if column.len() == trial_index {
+                column.push(value);
+            } else {
+                column[trial_index] = value;
+            }
+        }
         self.ranks.insert(rank);
         self.generation = self.generation.wrapping_add(1);
     }
@@ -228,6 +252,13 @@ impl FullHistory {
     }
     pub(crate) fn len(&self) -> usize {
         self.ranks.len()
+    }
+    pub(crate) fn typed_value(&self, trial: TrialId, param: ParamId) -> Option<ParamValue> {
+        self.columns
+            .get(param.0 as usize)
+            .and_then(|column| column.get(trial.0 as usize))
+            .copied()
+            .flatten()
     }
 }
 
@@ -314,11 +345,12 @@ mod tests {
     fn full_history_matches_total_order_for_both_directions() {
         for direction in [Direction::Minimize, Direction::Maximize] {
             let objectives = [3.0, -1.0, 3.0, 0.0, 7.0, -1.0];
-            let mut history = FullHistory::default();
+            let mut history = FullHistory::new(0);
             let mut reference = Vec::new();
             for (id, objective) in objectives.into_iter().enumerate() {
                 let rank = RankKey::new(TrialId(id as u64), objective, direction, 19);
-                history.insert(rank);
+                history.ranks.insert(rank);
+                history.generation = history.generation.wrapping_add(1);
                 reference.push(rank);
             }
             reference.sort_unstable();
