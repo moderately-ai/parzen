@@ -7,9 +7,9 @@ use std::{
     collections::{BTreeSet, BinaryHeap, VecDeque},
 };
 
-use crate::{
-    Direction, ParamValue, SearchSpace, TrialId, search_space::ParamId, storage::TrialStorage,
-};
+use crate::{Direction, SearchSpace, TrialId, storage::TrialStorage};
+
+use super::prepared::{PreparedParam, PreparedValue};
 
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct RankKey {
@@ -212,40 +212,57 @@ impl BoundedHistory {
 }
 
 pub(crate) struct FullHistory {
-    generation: u64,
     ranks: BTreeSet<RankKey>,
-    columns: Vec<Vec<Option<ParamValue>>>,
+    params: Vec<PreparedParam>,
+    columns: Vec<PreparedColumn>,
+}
+
+enum PreparedColumn {
+    Continuous(Vec<Option<f64>>),
+    Discrete(Vec<Option<PreparedDiscreteValue>>),
+    Categorical(Vec<Option<u32>>),
+}
+
+#[derive(Clone, Copy)]
+struct PreparedDiscreteValue {
+    grid_index: u64,
+    transformed: f64,
 }
 
 impl FullHistory {
-    pub(crate) fn new(param_count: usize) -> Self {
-        Self {
-            generation: 0,
+    pub(crate) fn new(space: &SearchSpace) -> Result<Self, crate::ParzenError> {
+        let params = (0..space.parameters.len())
+            .map(|index| PreparedParam::new(crate::ParamId(index as u32), index, space))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(Self {
             ranks: BTreeSet::new(),
-            columns: (0..param_count).map(|_| Vec::new()).collect(),
-        }
+            columns: params
+                .iter()
+                .map(|param| match param.kernel {
+                    super::prepared::PreparedKernel::Continuous(_) => {
+                        PreparedColumn::Continuous(Vec::new())
+                    }
+                    super::prepared::PreparedKernel::Discrete(_) => {
+                        PreparedColumn::Discrete(Vec::new())
+                    }
+                    super::prepared::PreparedKernel::Categorical(_) => {
+                        PreparedColumn::Categorical(Vec::new())
+                    }
+                })
+                .collect(),
+            params,
+        })
     }
 
-    pub(crate) fn insert(&mut self, rank: RankKey, storage: &TrialStorage, space: &SearchSpace) {
+    pub(crate) fn insert(&mut self, rank: RankKey, storage: &TrialStorage) {
         let trial_index = rank.trial.0 as usize;
-        for (index, column) in self.columns.iter_mut().enumerate() {
-            if column.len() < trial_index {
-                column.resize(trial_index, None);
-            }
-            let param = ParamId(index as u32);
-            let value =
-                storage.typed_value(rank.trial, param, &space.parameters[index].distribution);
-            if column.len() == trial_index {
-                column.push(value);
-            } else {
-                column[trial_index] = value;
-            }
+        for (param, column) in self.params.iter().zip(&mut self.columns) {
+            let value = storage
+                .typed_value(rank.trial, param.id, &param.distribution)
+                .and_then(|value| param.prepare_canonical(value));
+            column.set(trial_index, value);
         }
         self.ranks.insert(rank);
-        self.generation = self.generation.wrapping_add(1);
-    }
-    pub(crate) const fn generation(&self) -> u64 {
-        self.generation
     }
     pub(crate) fn iter(&self) -> impl Iterator<Item = TrialId> + '_ {
         self.ranks.iter().map(|rank| rank.trial)
@@ -253,12 +270,93 @@ impl FullHistory {
     pub(crate) fn len(&self) -> usize {
         self.ranks.len()
     }
-    pub(crate) fn typed_value(&self, trial: TrialId, param: ParamId) -> Option<ParamValue> {
+    pub(crate) fn typed_value(
+        &self,
+        trial: TrialId,
+        param: crate::ParamId,
+    ) -> Option<PreparedValue> {
         self.columns
             .get(param.0 as usize)
             .and_then(|column| column.get(trial.0 as usize))
-            .copied()
-            .flatten()
+    }
+}
+
+impl PreparedColumn {
+    fn set(&mut self, index: usize, value: Option<PreparedValue>) {
+        match self {
+            Self::Continuous(column) => {
+                set_column_value(
+                    column,
+                    index,
+                    value.and_then(|value| match value {
+                        PreparedValue::Continuous(value) => Some(value),
+                        _ => None,
+                    }),
+                );
+            }
+            Self::Discrete(column) => {
+                set_column_value(
+                    column,
+                    index,
+                    value.and_then(|value| match value {
+                        PreparedValue::Discrete {
+                            grid_index,
+                            transformed,
+                        } => Some(PreparedDiscreteValue {
+                            grid_index,
+                            transformed,
+                        }),
+                        _ => None,
+                    }),
+                );
+            }
+            Self::Categorical(column) => {
+                set_column_value(
+                    column,
+                    index,
+                    value.and_then(|value| match value {
+                        PreparedValue::Categorical(value) => Some(value),
+                        _ => None,
+                    }),
+                );
+            }
+        }
+    }
+
+    fn get(&self, index: usize) -> Option<PreparedValue> {
+        match self {
+            Self::Continuous(column) => column
+                .get(index)
+                .copied()
+                .flatten()
+                .map(PreparedValue::Continuous),
+            Self::Discrete(column) => {
+                column
+                    .get(index)
+                    .copied()
+                    .flatten()
+                    .map(|value| PreparedValue::Discrete {
+                        grid_index: value.grid_index,
+                        transformed: value.transformed,
+                    })
+            }
+            Self::Categorical(column) => column
+                .get(index)
+                .copied()
+                .flatten()
+                .map(PreparedValue::Categorical),
+        }
+    }
+}
+
+fn set_column_value<T>(column: &mut Vec<Option<T>>, index: usize, value: Option<T>) {
+    if column.len() < index {
+        column.resize_with(index, || None);
+    }
+    if column.len() == index {
+        column.push(value);
+    } else {
+        column[index] = value;
     }
 }
 
@@ -272,6 +370,7 @@ pub(crate) fn stable_key(seed: u64, value: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{Distribution, FloatDistribution, ParamValue};
 
     fn reference_split(
         history: &BoundedHistory,
@@ -345,12 +444,12 @@ mod tests {
     fn full_history_matches_total_order_for_both_directions() {
         for direction in [Direction::Minimize, Direction::Maximize] {
             let objectives = [3.0, -1.0, 3.0, 0.0, 7.0, -1.0];
-            let mut history = FullHistory::new(0);
+            let space = SearchSpace::new();
+            let mut history = FullHistory::new(&space).unwrap();
             let mut reference = Vec::new();
             for (id, objective) in objectives.into_iter().enumerate() {
                 let rank = RankKey::new(TrialId(id as u64), objective, direction, 19);
                 history.ranks.insert(rank);
-                history.generation = history.generation.wrapping_add(1);
                 reference.push(rank);
             }
             reference.sort_unstable();
@@ -359,5 +458,44 @@ mod tests {
                 reference.iter().map(|rank| rank.trial).collect::<Vec<_>>()
             );
         }
+    }
+
+    #[test]
+    fn full_history_stores_transformed_values_in_typed_columns() {
+        let mut space = SearchSpace::new();
+        let linear = space
+            .add(
+                "linear",
+                Distribution::Float(FloatDistribution::linear(-2.0, 2.0).unwrap()),
+            )
+            .unwrap();
+        let log = space
+            .add(
+                "log",
+                Distribution::Float(FloatDistribution::log(0.01, 100.0).unwrap()),
+            )
+            .unwrap();
+        let mut storage = TrialStorage::default();
+        let trial = storage
+            .push(
+                &[
+                    (linear, ParamValue::Float(1.5)),
+                    (log, ParamValue::Float(1.0)),
+                ],
+                3.0,
+            )
+            .unwrap();
+        let mut history = FullHistory::new(&space).unwrap();
+        history.insert(RankKey::new(trial, 3.0, Direction::Minimize, 17), &storage);
+
+        assert_eq!(
+            history.typed_value(trial, linear),
+            Some(PreparedValue::Continuous(1.5))
+        );
+        assert_eq!(
+            history.typed_value(trial, log),
+            Some(PreparedValue::Continuous(0.0))
+        );
+        assert!(std::mem::size_of::<Option<f64>>() <= std::mem::size_of::<Option<ParamValue>>());
     }
 }

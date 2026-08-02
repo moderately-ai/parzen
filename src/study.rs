@@ -51,7 +51,7 @@ impl Study {
                 "search-space group exceeds sampler group limit".into(),
             ));
         }
-        sampler.initialize(&space);
+        sampler.initialize(&space)?;
         Ok(Self {
             direction,
             sampler,
@@ -155,7 +155,7 @@ impl Study {
         self.pending.clear();
         self.update_best(id);
         self.sampler
-            .on_trial_added(id, &self.storage, &self.space, self.direction);
+            .on_trial_added(id, &self.storage, self.direction);
         Ok(id)
     }
 
@@ -197,7 +197,7 @@ impl Study {
             .ok_or(ParzenError::CapacityOverflow)?;
         self.update_best(id);
         self.sampler
-            .on_trial_added(id, &self.storage, &self.space, self.direction);
+            .on_trial_added(id, &self.storage, self.direction);
         Ok(id)
     }
 

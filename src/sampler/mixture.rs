@@ -8,11 +8,11 @@ use rand::{Rng, distr::Distribution as _, rngs::StdRng};
 use rand_distr::Normal;
 use smallvec::SmallVec;
 
-use super::{WeightStrategy, math};
-use crate::{
-    Distribution, FloatDistribution, IntDistribution, ParamValue, ParzenError, SearchSpace,
-    TrialId, search_space::ParamId,
+use super::{
+    WeightStrategy, math,
+    prepared::{PreparedEstimator, PreparedKernel, PreparedParam, PreparedValue},
 };
+use crate::{Distribution, ParamId, ParamValue, ParzenError, TrialId};
 
 enum KernelSet {
     Categorical {
@@ -26,6 +26,7 @@ enum KernelSet {
 
 struct NumericKernels {
     distribution: Distribution,
+    prior_center: f64,
     means: Vec<f64>,
     sigmas: Vec<f64>,
     inverse_sigmas: Vec<f64>,
@@ -38,17 +39,30 @@ struct NumericKernels {
 }
 
 pub(crate) struct ProductMixture {
-    params: SmallVec<[ParamId; 8]>,
-    log_weights: Vec<f64>,
-    cumulative_weights: Vec<f64>,
+    params: Box<[PreparedParam]>,
+    weights: MixtureWeights,
     kernels: Vec<KernelSet>,
     categorical_marginal: Option<CategoricalMarginal>,
+}
+
+enum MixtureWeights {
+    Uniform {
+        observations: usize,
+        observation_probability: f64,
+        observation_log_weight: f64,
+        prior_log_weight: f64,
+        prior_probability: f64,
+    },
+    General {
+        log_weights: Vec<f64>,
+        cumulative_weights: Vec<f64>,
+    },
 }
 
 #[derive(Default)]
 pub(crate) struct ModelBuildWorkspace {
     component_weights: Vec<f64>,
-    values: Vec<ParamValue>,
+    numeric_values: Vec<f64>,
     order: Vec<usize>,
 }
 
@@ -57,29 +71,159 @@ struct CategoricalMarginal {
     log_probabilities: Vec<f64>,
 }
 
+impl MixtureWeights {
+    fn rebuild(
+        &mut self,
+        observations: usize,
+        prior_weight: f64,
+        strategy: WeightStrategy,
+        component_weights: &mut Vec<f64>,
+    ) -> Result<(), ParzenError> {
+        if strategy == WeightStrategy::Uniform {
+            let total = observations as f64 + prior_weight;
+            let observation_probability = total.recip();
+            let prior_probability = prior_weight / total;
+            *self = Self::Uniform {
+                observations,
+                observation_probability,
+                observation_log_weight: observation_probability.ln(),
+                prior_log_weight: prior_probability.ln(),
+                prior_probability,
+            };
+            return Ok(());
+        }
+        component_weights.clear();
+        component_weights.extend(
+            (0..observations).map(|index| observation_weight(index, observations, strategy)),
+        );
+        component_weights.push(prior_weight);
+        let total: f64 = component_weights.iter().sum();
+        if !total.is_finite() || total <= 0.0 {
+            return Err(ParzenError::InternalModel(
+                "mixture weights are not finite and positive".into(),
+            ));
+        }
+        for weight in component_weights.iter_mut() {
+            *weight /= total;
+        }
+        if !matches!(self, Self::General { .. }) {
+            *self = Self::General {
+                log_weights: Vec::new(),
+                cumulative_weights: Vec::new(),
+            };
+        }
+        let Self::General {
+            log_weights,
+            cumulative_weights,
+        } = self
+        else {
+            unreachable!();
+        };
+        log_weights.clear();
+        log_weights.extend(component_weights.iter().map(|weight| weight.ln()));
+        cumulative_weights.clear();
+        let mut cumulative = 0.0;
+        for weight in component_weights.iter().copied() {
+            cumulative += weight;
+            cumulative_weights.push(cumulative);
+        }
+        if let Some(last) = cumulative_weights.last_mut() {
+            *last = 1.0;
+        }
+        Ok(())
+    }
+
+    fn probability(&self, component: usize) -> f64 {
+        match self {
+            Self::Uniform {
+                observations,
+                observation_log_weight,
+                prior_log_weight,
+                ..
+            } => {
+                if component == *observations {
+                    prior_log_weight.exp()
+                } else {
+                    observation_log_weight.exp()
+                }
+            }
+            Self::General { log_weights, .. } => log_weights[component].exp(),
+        }
+    }
+
+    fn sample_component(&self, draw: f64) -> usize {
+        match self {
+            Self::Uniform {
+                observations,
+                observation_probability,
+                prior_probability,
+                ..
+            } => {
+                if *observations == 0 || draw >= 1.0 - prior_probability {
+                    return *observations;
+                }
+                (draw / observation_probability).floor() as usize
+            }
+            Self::General {
+                log_weights,
+                cumulative_weights,
+            } => cumulative_weights
+                .partition_point(|cumulative| *cumulative <= draw)
+                .min(log_weights.len() - 1),
+        }
+    }
+
+    fn fill_log_weights(&self, output: &mut Vec<f64>) {
+        match self {
+            Self::Uniform {
+                observations,
+                observation_log_weight,
+                prior_log_weight,
+                ..
+            } => {
+                output.resize(*observations, *observation_log_weight);
+                output.push(*prior_log_weight);
+            }
+            Self::General { log_weights, .. } => output.extend_from_slice(log_weights),
+        }
+    }
+}
+
 impl ProductMixture {
     pub(crate) fn params_len(&self) -> usize {
         self.params.len()
     }
 
-    pub(crate) fn empty(params: &[ParamId], space: &SearchSpace) -> Result<Self, ParzenError> {
-        let kernels = params
+    pub(crate) fn empty(prepared: &PreparedEstimator) -> Result<Self, ParzenError> {
+        let kernels = prepared
+            .params
             .iter()
-            .map(|param| {
-                let distribution = space.parameters[param.0 as usize].distribution.clone();
-                match distribution {
-                    Distribution::Categorical(dist) => Ok(KernelSet::Categorical {
-                        choices: dist.num_choices(),
-                        observed: Vec::new(),
-                        log_hit: 0.0,
-                        log_miss: 0.0,
-                    }),
-                    Distribution::Float(dist) => {
-                        Ok(KernelSet::Numeric(NumericKernels::empty_float(dist)?))
-                    }
-                    Distribution::Int(dist) => {
-                        Ok(KernelSet::Numeric(NumericKernels::empty_int(dist)?))
-                    }
+            .map(|param| match param.kernel {
+                PreparedKernel::Categorical(categorical) => Ok(KernelSet::Categorical {
+                    choices: categorical.choices,
+                    observed: Vec::new(),
+                    log_hit: 0.0,
+                    log_miss: 0.0,
+                }),
+                PreparedKernel::Continuous(continuous) => {
+                    Ok(KernelSet::Numeric(NumericKernels::empty(
+                        param.distribution.clone(),
+                        continuous.transformed_low,
+                        continuous.transformed_high,
+                        continuous.range,
+                        continuous.prior_center,
+                        false,
+                    )?))
+                }
+                PreparedKernel::Discrete(discrete) => {
+                    Ok(KernelSet::Numeric(NumericKernels::empty(
+                        param.distribution.clone(),
+                        discrete.adapted_low,
+                        discrete.adapted_high,
+                        discrete.range,
+                        discrete.prior_center,
+                        true,
+                    )?))
                 }
             })
             .collect::<Result<Vec<_>, ParzenError>>()?;
@@ -89,9 +233,14 @@ impl ProductMixture {
                 log_probabilities: Vec::new(),
             });
         Ok(Self {
-            params: params.iter().copied().collect(),
-            log_weights: Vec::new(),
-            cumulative_weights: Vec::new(),
+            params: prepared.params.iter().cloned().collect(),
+            weights: MixtureWeights::Uniform {
+                observations: 0,
+                observation_probability: 0.0,
+                observation_log_weight: f64::NEG_INFINITY,
+                prior_log_weight: 0.0,
+                prior_probability: 1.0,
+            },
             kernels,
             categorical_marginal,
         })
@@ -100,56 +249,25 @@ impl ProductMixture {
     pub(crate) fn rebuild<F>(
         &mut self,
         trials: &[TrialId],
-        space: &SearchSpace,
         prior_weight: f64,
         weights: WeightStrategy,
         workspace: &mut ModelBuildWorkspace,
         mut value_for: F,
     ) -> Result<(), ParzenError>
     where
-        F: FnMut(TrialId, ParamId, &Distribution) -> Option<ParamValue>,
+        F: FnMut(TrialId, &PreparedParam) -> Option<PreparedValue>,
     {
         let component_count = trials.len() + 1;
-        workspace.component_weights.clear();
-        workspace.component_weights.extend(
-            (0..trials.len()).map(|index| observation_weight(index, trials.len(), weights)),
-        );
-        workspace.component_weights.push(prior_weight);
-        let total: f64 = workspace.component_weights.iter().sum();
-        if !total.is_finite() || total <= 0.0 {
-            return Err(ParzenError::InternalModel(
-                "mixture weights are not finite and positive".into(),
-            ));
-        }
-        for weight in &mut workspace.component_weights {
-            *weight /= total;
-        }
-        self.log_weights.clear();
-        self.log_weights
-            .extend(workspace.component_weights.iter().map(|weight| weight.ln()));
-        self.cumulative_weights.clear();
-        let mut cumulative = 0.0;
-        for weight in workspace.component_weights.iter().copied() {
-            cumulative += weight;
-            self.cumulative_weights.push(cumulative);
-        }
-        if let Some(last) = self.cumulative_weights.last_mut() {
-            *last = 1.0;
-        }
+        self.weights.rebuild(
+            trials.len(),
+            prior_weight,
+            weights,
+            &mut workspace.component_weights,
+        )?;
 
-        for (param, kernel) in self.params.iter().zip(&mut self.kernels) {
-            let definition = &space.parameters[param.0 as usize].distribution;
-            workspace.values.clear();
-            for trial in trials {
-                workspace
-                    .values
-                    .push(value_for(*trial, *param, definition).ok_or_else(|| {
-                        ParzenError::InternalModel(
-                            "retained trial is missing an estimator parameter".into(),
-                        )
-                    })?);
-            }
-            match (kernel, definition) {
+        for (position, (param, kernel)) in self.params.iter().zip(&mut self.kernels).enumerate() {
+            debug_assert_eq!(param.position, position);
+            match (kernel, param.kernel) {
                 (
                     KernelSet::Categorical {
                         choices,
@@ -157,23 +275,42 @@ impl ProductMixture {
                         log_hit,
                         log_miss,
                     },
-                    Distribution::Categorical(dist),
+                    PreparedKernel::Categorical(categorical),
                 ) => {
                     observed.clear();
-                    for value in &workspace.values {
-                        observed.push(value.as_categorical().ok_or_else(|| {
-                            ParzenError::InternalModel("categorical value type mismatch".into())
-                        })?);
+                    for trial in trials {
+                        let Some(PreparedValue::Categorical(value)) = value_for(*trial, param)
+                        else {
+                            return Err(ParzenError::InternalModel(
+                                "retained categorical trial value is missing or invalid".into(),
+                            ));
+                        };
+                        observed.push(value);
                     }
-                    *choices = dist.num_choices();
+                    *choices = categorical.choices;
                     let base = prior_weight / component_count as f64;
-                    let denominator = 1.0 + base * f64::from(dist.num_choices());
+                    let denominator = 1.0 + base * f64::from(categorical.choices);
                     *log_hit = ((1.0 + base) / denominator).ln();
                     *log_miss = (base / denominator).ln();
                 }
-                (KernelSet::Numeric(kernels), Distribution::Float(_))
-                | (KernelSet::Numeric(kernels), Distribution::Int(_)) => {
-                    kernels.rebuild(&workspace.values, &mut workspace.order)?;
+                (KernelSet::Numeric(kernels), PreparedKernel::Continuous(_))
+                | (KernelSet::Numeric(kernels), PreparedKernel::Discrete(_)) => {
+                    workspace.numeric_values.clear();
+                    for trial in trials {
+                        let transformed = match value_for(*trial, param) {
+                            Some(PreparedValue::Continuous(value))
+                            | Some(PreparedValue::Discrete {
+                                transformed: value, ..
+                            }) => value,
+                            _ => {
+                                return Err(ParzenError::InternalModel(
+                                    "retained numeric trial value is missing or invalid".into(),
+                                ));
+                            }
+                        };
+                        workspace.numeric_values.push(transformed);
+                    }
+                    kernels.rebuild(&workspace.numeric_values, &mut workspace.order)?;
                 }
                 _ => {
                     return Err(ParzenError::InternalModel(
@@ -197,7 +334,7 @@ impl ProductMixture {
             marginal.log_probabilities.clear();
             marginal.log_probabilities.resize(*choices as usize, 0.0);
             for component in 0..component_count {
-                let component_weight = self.log_weights[component].exp();
+                let component_weight = self.weights.probability(component);
                 if component == observed.len() {
                     let probability = component_weight / f64::from(*choices);
                     for value in &mut marginal.log_probabilities {
@@ -243,10 +380,7 @@ impl ProductMixture {
             return Ok(());
         }
         let draw = rng.random::<f64>();
-        let component = self
-            .cumulative_weights
-            .partition_point(|cumulative| *cumulative <= draw)
-            .min(self.log_weights.len() - 1);
+        let component = self.weights.sample_component(draw);
         for kernel in &self.kernels {
             values.push(kernel.sample(component, rng)?);
         }
@@ -277,7 +411,7 @@ impl ProductMixture {
             ));
         }
         scratch.clear();
-        scratch.extend_from_slice(&self.log_weights);
+        self.weights.fill_log_weights(scratch);
         for (value, kernel) in candidate.iter().copied().zip(&self.kernels) {
             kernel.add_log_probabilities(value, scratch)?;
         }
@@ -296,7 +430,7 @@ impl ProductMixture {
         Ok(self
             .params
             .iter()
-            .copied()
+            .map(|param| param.id)
             .zip(values.iter().copied())
             .collect())
     }
@@ -365,45 +499,26 @@ impl KernelSet {
 }
 
 impl NumericKernels {
-    fn empty_float(dist: FloatDistribution) -> Result<Self, ParzenError> {
-        let (low, high, discrete) = if let Some(step) = dist.step() {
-            let highest = dist.grid_value(dist.max_step_index().unwrap_or(0));
-            (dist.low() - step / 2.0, highest + step / 2.0, true)
-        } else {
-            (
-                dist.transform(dist.low()),
-                dist.transform(dist.high()),
-                false,
-            )
-        };
-        Self::empty(Distribution::Float(dist), low, high, discrete)
-    }
-
-    fn empty_int(dist: IntDistribution) -> Result<Self, ParzenError> {
-        let half_step = dist.step() as f64 / 2.0;
-        let raw_low = dist.low() as f64 - half_step;
-        let raw_high = dist.grid_value(dist.max_step_index()) as f64 + half_step;
-        let (low, high) = match dist.scale() {
-            crate::IntScale::Linear => (raw_low, raw_high),
-            crate::IntScale::Log => (raw_low.ln(), raw_high.ln()),
-        };
-        Self::empty(Distribution::Int(dist), low, high, true)
-    }
-
     fn empty(
         distribution: Distribution,
         adapted_low: f64,
         adapted_high: f64,
+        range: f64,
+        prior_center: f64,
         discrete: bool,
     ) -> Result<Self, ParzenError> {
-        let range = adapted_high - adapted_low;
-        if !range.is_finite() || range <= 0.0 {
+        if !range.is_finite()
+            || range <= 0.0
+            || (adapted_high - adapted_low - range).abs() > f64::EPSILON * range.abs()
+            || !prior_center.is_finite()
+        {
             return Err(ParzenError::InternalModel(
                 "numeric kernel domain is not finite and positive".into(),
             ));
         }
         Ok(Self {
             distribution,
+            prior_center,
             means: Vec::new(),
             sigmas: Vec::new(),
             inverse_sigmas: Vec::new(),
@@ -416,43 +531,9 @@ impl NumericKernels {
         })
     }
 
-    fn rebuild(
-        &mut self,
-        values: &[ParamValue],
-        order: &mut Vec<usize>,
-    ) -> Result<(), ParzenError> {
+    fn rebuild(&mut self, values: &[f64], order: &mut Vec<usize>) -> Result<(), ParzenError> {
         self.means.clear();
-        match self.distribution {
-            Distribution::Float(dist) => {
-                for value in values {
-                    self.means.push(
-                        value
-                            .as_float()
-                            .map(|value| dist.transform(value))
-                            .ok_or_else(|| {
-                                ParzenError::InternalModel("float value type mismatch".into())
-                            })?,
-                    );
-                }
-            }
-            Distribution::Int(dist) => {
-                for value in values {
-                    self.means.push(
-                        value
-                            .as_int()
-                            .map(|value| dist.transform(value))
-                            .ok_or_else(|| {
-                                ParzenError::InternalModel("integer value type mismatch".into())
-                            })?,
-                    );
-                }
-            }
-            Distribution::Categorical(_) => {
-                return Err(ParzenError::InternalModel(
-                    "categorical distribution in numeric kernel".into(),
-                ));
-            }
-        }
+        self.means.extend_from_slice(values);
         let range = self.adapted_high - self.adapted_low;
         self.sigmas.clear();
         self.sigmas.resize(self.means.len(), range);
@@ -478,8 +559,7 @@ impl NumericKernels {
                     .clamp(minimum, range);
             }
         }
-        self.means
-            .push((self.adapted_low + self.adapted_high) * 0.5);
+        self.means.push(self.prior_center);
         self.sigmas.push(range);
         self.inverse_sigmas.clear();
         self.inverse_sigmas
@@ -557,12 +637,15 @@ impl NumericKernels {
             }
             return Ok(());
         }
-        let transformed = match self.distribution {
-            Distribution::Float(dist) => value.as_float().map(|value| dist.transform(value)),
-            Distribution::Int(dist) => value.as_int().map(|value| dist.transform(value)),
-            Distribution::Categorical(_) => None,
-        }
-        .ok_or_else(|| ParzenError::InternalModel("numeric candidate type mismatch".into()))?;
+        let transformed = match (&self.distribution, value) {
+            (Distribution::Float(dist), ParamValue::Float(value)) => dist.transform(value),
+            (Distribution::Int(dist), ParamValue::Int(value)) => dist.transform(value),
+            _ => {
+                return Err(ParzenError::InternalModel(
+                    "numeric candidate type mismatch".into(),
+                ));
+            }
+        };
         for (component, score) in scores.iter_mut().enumerate() {
             let z = (transformed - self.means[component]) * self.inverse_sigmas[component];
             *score += self.log_coefficients[component] - 0.5 * z * z;
@@ -616,5 +699,125 @@ fn observation_weight(index: usize, count: usize, strategy: WeightStrategy) -> f
         1.0
     } else {
         (1.0 / count as f64) + (index as f64 / (ramp - 1) as f64) * (1.0 - 1.0 / count as f64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn assert_close(actual: f64, expected: f64) {
+        let tolerance = 1e-14_f64.max(expected.abs() * 1e-14);
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "actual={actual}, expected={expected}"
+        );
+    }
+
+    #[test]
+    fn uniform_weights_match_explicit_normalization() {
+        let mut weights = MixtureWeights::Uniform {
+            observations: 0,
+            observation_probability: 0.0,
+            observation_log_weight: f64::NEG_INFINITY,
+            prior_log_weight: 0.0,
+            prior_probability: 1.0,
+        };
+        let mut workspace = Vec::new();
+        weights
+            .rebuild(4, 2.0, WeightStrategy::Uniform, &mut workspace)
+            .unwrap();
+
+        for component in 0..4 {
+            assert_close(weights.probability(component), 1.0 / 6.0);
+        }
+        assert_close(weights.probability(4), 2.0 / 6.0);
+        assert_eq!(weights.sample_component(0.0), 0);
+        assert_eq!(weights.sample_component(1.0 / 6.0), 1);
+        assert_eq!(weights.sample_component(2.0 / 3.0), 4);
+
+        let mut logs = Vec::new();
+        weights.fill_log_weights(&mut logs);
+        assert_eq!(logs.len(), 5);
+        assert_close(logsumexp_probabilities(&logs), 1.0);
+    }
+
+    #[test]
+    fn uniform_component_selection_matches_explicit_cumulative_weights() {
+        for (observations, prior_weight) in [(1, 0.25), (4, 1.0), (25, 2.5), (512, 1.0)] {
+            let mut weights = MixtureWeights::Uniform {
+                observations: 0,
+                observation_probability: 0.0,
+                observation_log_weight: f64::NEG_INFINITY,
+                prior_log_weight: 0.0,
+                prior_probability: 1.0,
+            };
+            let mut workspace = Vec::new();
+            weights
+                .rebuild(
+                    observations,
+                    prior_weight,
+                    WeightStrategy::Uniform,
+                    &mut workspace,
+                )
+                .unwrap();
+            let total = observations as f64 + prior_weight;
+            let mut cumulative = Vec::with_capacity(observations + 1);
+            let mut sum = 0.0;
+            for raw in std::iter::repeat_n(1.0, observations).chain([prior_weight]) {
+                sum += raw / total;
+                cumulative.push(sum);
+            }
+            *cumulative.last_mut().unwrap() = 1.0;
+
+            let mut state = 0x9e37_79b9_7f4a_7c15_u64;
+            for _ in 0..10_000 {
+                state = state.wrapping_add(0x9e37_79b9_7f4a_7c15).rotate_left(17);
+                let draw = (state >> 11) as f64 * (1.0 / ((1_u64 << 53) as f64));
+                let expected = cumulative
+                    .partition_point(|boundary| *boundary <= draw)
+                    .min(cumulative.len() - 1);
+                assert_eq!(weights.sample_component(draw), expected);
+            }
+        }
+    }
+
+    #[test]
+    fn general_weights_reuse_vectors_and_match_optuna_formula() {
+        let mut weights = MixtureWeights::Uniform {
+            observations: 0,
+            observation_probability: 0.0,
+            observation_log_weight: f64::NEG_INFINITY,
+            prior_log_weight: 0.0,
+            prior_probability: 1.0,
+        };
+        let mut workspace = Vec::new();
+        weights
+            .rebuild(40, 1.0, WeightStrategy::Optuna, &mut workspace)
+            .unwrap();
+
+        let mut logs = Vec::new();
+        weights.fill_log_weights(&mut logs);
+        assert_eq!(logs.len(), 41);
+        assert_close(logsumexp_probabilities(&logs), 1.0);
+        assert!(weights.probability(0) < weights.probability(20));
+        assert_close(weights.probability(39), weights.probability(40));
+
+        let previous_capacity = match &weights {
+            MixtureWeights::General { log_weights, .. } => log_weights.capacity(),
+            MixtureWeights::Uniform { .. } => unreachable!(),
+        };
+        weights
+            .rebuild(30, 1.0, WeightStrategy::Optuna, &mut workspace)
+            .unwrap();
+        let current_capacity = match &weights {
+            MixtureWeights::General { log_weights, .. } => log_weights.capacity(),
+            MixtureWeights::Uniform { .. } => unreachable!(),
+        };
+        assert_eq!(current_capacity, previous_capacity);
+    }
+
+    fn logsumexp_probabilities(log_weights: &[f64]) -> f64 {
+        log_weights.iter().map(|value| value.exp()).sum()
     }
 }

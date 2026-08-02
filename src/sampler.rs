@@ -13,17 +13,18 @@
 mod history;
 mod math;
 mod mixture;
+mod prepared;
 mod workspace;
 
 use std::{num::NonZeroUsize, sync::Arc};
 
-use hashbrown::HashMap;
 use rand::{Rng, SeedableRng, distr::Uniform, rngs::StdRng};
 use smallvec::SmallVec;
 
 use self::{
     history::{BoundedHistory, FullHistory, RankKey},
     mixture::{ModelBuildWorkspace, ProductMixture},
+    prepared::PreparedEstimator,
     workspace::AcquisitionWorkspace,
 };
 use crate::{
@@ -160,22 +161,30 @@ impl TpeSamplerConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum EstimatorKey {
     Param(ParamId),
     Group(GroupId),
 }
 
-struct Tracker {
-    key: EstimatorKey,
-    params: SmallVec<[ParamId; 8]>,
-    history: BoundedHistory,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct EstimatorId(usize);
+
+enum EstimatorHistory {
+    Bounded(BoundedHistory),
+    Full { seen: usize, generation: u64 },
 }
 
-enum Histories {
-    Uninitialized,
-    Bounded(Vec<Tracker>),
-    Full(FullHistory),
+struct EstimatorState {
+    prepared: PreparedEstimator,
+    history: EstimatorHistory,
+    cache: Option<ModelCache>,
+}
+
+struct EstimatorRegistry {
+    states: Vec<EstimatorState>,
+    param_to_estimator: Vec<EstimatorId>,
+    group_to_estimator: Vec<EstimatorId>,
 }
 
 struct ModelCache {
@@ -190,8 +199,8 @@ struct ModelCache {
 pub struct TpeSampler {
     rng: StdRng,
     config: TpeSamplerConfig,
-    histories: Histories,
-    caches: HashMap<EstimatorKey, ModelCache>,
+    registry: Option<EstimatorRegistry>,
+    full_history: Option<FullHistory>,
     workspace: AcquisitionWorkspace,
 }
 
@@ -234,8 +243,8 @@ impl TpeSampler {
         Ok(Self {
             rng: StdRng::seed_from_u64(config.seed),
             config,
-            histories: Histories::Uninitialized,
-            caches: HashMap::new(),
+            registry: None,
+            full_history: None,
             workspace: AcquisitionWorkspace::new(max_good, max_bad),
         })
     }
@@ -244,61 +253,104 @@ impl TpeSampler {
         self.config.model
     }
 
-    pub(crate) fn initialize(&mut self, space: &SearchSpace) {
-        self.histories = match self.config.history {
-            HistoryPolicy::Full => Histories::Full(FullHistory::new(space.parameters.len())),
-            HistoryPolicy::Bounded {
-                max_good_trials,
-                max_bad_trials,
-                recent_bad_trials,
-            } => {
-                let definitions = estimator_definitions(self.config.model, space);
-                Histories::Bounded(
-                    definitions
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, (key, params))| Tracker {
-                            key,
-                            params,
-                            history: BoundedHistory::new(
-                                max_good_trials.get(),
-                                max_bad_trials.get(),
-                                recent_bad_trials,
-                                self.config.seed ^ index as u64,
-                            ),
-                        })
-                        .collect(),
-                )
+    pub(crate) fn initialize(&mut self, space: &SearchSpace) -> Result<(), ParzenError> {
+        let definitions = estimator_definitions(self.config.model, space);
+        let mut param_to_estimator = vec![EstimatorId(usize::MAX); space.parameters.len()];
+        let mut group_to_estimator = vec![EstimatorId(usize::MAX); space.groups.len()];
+        let mut states = Vec::with_capacity(definitions.len());
+        for (index, (key, params)) in definitions.into_iter().enumerate() {
+            let id = EstimatorId(index);
+            match key {
+                EstimatorKey::Param(param) => param_to_estimator[param.0 as usize] = id,
+                EstimatorKey::Group(group) => {
+                    group_to_estimator[group.0 as usize] = id;
+                    for param in &params {
+                        param_to_estimator[param.0 as usize] = id;
+                    }
+                }
             }
+            let prepared = PreparedEstimator::new(key, &params, space)?;
+            debug_assert_eq!(prepared.key, key);
+            let history = match self.config.history {
+                HistoryPolicy::Full => EstimatorHistory::Full {
+                    seen: 0,
+                    generation: 0,
+                },
+                HistoryPolicy::Bounded {
+                    max_good_trials,
+                    max_bad_trials,
+                    recent_bad_trials,
+                } => EstimatorHistory::Bounded(BoundedHistory::new(
+                    max_good_trials.get(),
+                    max_bad_trials.get(),
+                    recent_bad_trials,
+                    self.config.seed ^ index as u64,
+                )),
+            };
+            states.push(EstimatorState {
+                prepared,
+                history,
+                cache: None,
+            });
+        }
+        if param_to_estimator
+            .iter()
+            .any(|estimator| estimator.0 == usize::MAX)
+            || group_to_estimator
+                .iter()
+                .any(|estimator| estimator.0 == usize::MAX)
+        {
+            return Err(ParzenError::InternalModel(
+                "estimator registry mapping is incomplete".into(),
+            ));
+        }
+        self.full_history = if matches!(self.config.history, HistoryPolicy::Full) {
+            Some(FullHistory::new(space)?)
+        } else {
+            None
         };
+        self.registry = Some(EstimatorRegistry {
+            states,
+            param_to_estimator,
+            group_to_estimator,
+        });
+        Ok(())
     }
 
     pub(crate) fn on_trial_added(
         &mut self,
         id: TrialId,
         storage: &TrialStorage,
-        space: &SearchSpace,
         direction: Direction,
     ) {
         let rank = RankKey::new(id, storage.header(id).value, direction, self.config.seed);
-        match &mut self.histories {
-            Histories::Full(history) => history.insert(rank, storage, space),
-            Histories::Bounded(trackers) => {
-                for tracker in trackers {
-                    if tracker.params.iter().all(|param| {
+        if let Some(history) = &mut self.full_history {
+            history.insert(rank, storage);
+        }
+        let Some(registry) = &mut self.registry else {
+            return;
+        };
+        for state in &mut registry.states {
+            let applicable = state.prepared.params.iter().all(|param| {
+                self.full_history.as_ref().map_or_else(
+                    || {
                         storage
-                            .typed_value(
-                                id,
-                                *param,
-                                &space.parameters[param.0 as usize].distribution,
-                            )
+                            .typed_value(id, param.id, &param.distribution)
                             .is_some()
-                    }) {
-                        tracker.history.insert(rank);
-                    }
+                    },
+                    |history| history.typed_value(id, param.id).is_some(),
+                )
+            });
+            if !applicable {
+                continue;
+            }
+            match &mut state.history {
+                EstimatorHistory::Bounded(history) => history.insert(rank),
+                EstimatorHistory::Full { seen, generation } => {
+                    *seen += 1;
+                    *generation = generation.wrapping_add(1);
                 }
             }
-            Histories::Uninitialized => {}
         }
     }
 
@@ -308,7 +360,13 @@ impl TpeSampler {
         space: &SearchSpace,
         storage: &TrialStorage,
     ) -> Result<ParamValue, ParzenError> {
-        let values = self.sample_estimator(EstimatorKey::Param(param), &[param], space, storage)?;
+        let estimator = self
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.param_to_estimator.get(param.0 as usize))
+            .copied()
+            .ok_or_else(|| ParzenError::InternalModel("parameter estimator is missing".into()))?;
+        let values = self.sample_estimator(estimator, space, storage)?;
         values.first().map(|(_, value)| *value).ok_or_else(|| {
             ParzenError::InternalModel("parameter estimator returned no value".into())
         })
@@ -320,37 +378,38 @@ impl TpeSampler {
         space: &SearchSpace,
         storage: &TrialStorage,
     ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
-        self.sample_estimator(
-            EstimatorKey::Group(group),
-            &space.groups[group.0 as usize],
-            space,
-            storage,
-        )
+        let estimator = self
+            .registry
+            .as_ref()
+            .and_then(|registry| registry.group_to_estimator.get(group.0 as usize))
+            .copied()
+            .ok_or_else(|| ParzenError::InternalModel("group estimator is missing".into()))?;
+        self.sample_estimator(estimator, space, storage)
     }
 
     fn sample_estimator(
         &mut self,
-        key: EstimatorKey,
-        params: &[ParamId],
+        estimator: EstimatorId,
         space: &SearchSpace,
         storage: &TrialStorage,
     ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
-        let generation = self.generation_for(key)?;
-        if self
-            .caches
-            .get(&key)
+        let state = self.state(estimator)?;
+        let generation = state.history.generation();
+        if state
+            .cache
+            .as_ref()
             .is_some_and(|cache| cache.generation == generation)
         {
-            return self.acquire(key);
+            return self.acquire(estimator);
         }
-        let all_categorical = params.iter().all(|param| {
-            matches!(
-                space.parameters[param.0 as usize].distribution,
-                Distribution::Categorical(_)
-            )
-        });
-        let (seen, generation, applicable) =
-            self.applicable_history(key, params, all_categorical)?;
+        let all_categorical = state.prepared.all_categorical();
+        let params = state
+            .prepared
+            .params
+            .iter()
+            .map(|param| param.id)
+            .collect::<SmallVec<[ParamId; 8]>>();
+        let (seen, generation, applicable) = self.applicable_history(estimator, all_categorical)?;
         let flat = all_categorical
             && applicable.first().is_some_and(|first| {
                 applicable
@@ -359,7 +418,7 @@ impl TpeSampler {
             });
         if seen < self.config.startup_trials || seen == 0 || (all_categorical && flat) {
             if all_categorical {
-                return self.sample_unseen_categorical(params, &applicable, space, storage);
+                return self.sample_unseen_categorical(&params, &applicable, space, storage);
             }
             return params
                 .iter()
@@ -376,102 +435,98 @@ impl TpeSampler {
         }
 
         let good_count = self.good_count(seen)?;
-        let (good_trials, bad_trials) = match &self.histories {
-            Histories::Bounded(trackers) => {
-                let history = &trackers
-                    .iter()
-                    .find(|tracker| tracker.key == key)
-                    .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into()))?
-                    .history;
-                history.split_into(good_count, &mut self.workspace.history);
-                (
-                    self.workspace.history.good_trials.as_slice(),
-                    self.workspace.history.bad_trials.as_slice(),
-                )
+        let bounded = matches!(self.state(estimator)?.history, EstimatorHistory::Bounded(_));
+        let (good_trials, bad_trials) = if bounded {
+            let registry = self.registry.as_ref().ok_or_else(|| {
+                ParzenError::InternalModel("sampler registry is not initialized".into())
+            })?;
+            match &registry.states[estimator.0].history {
+                EstimatorHistory::Bounded(history) => {
+                    history.split_into(good_count, &mut self.workspace.history);
+                    (
+                        self.workspace.history.good_trials.as_slice(),
+                        self.workspace.history.bad_trials.as_slice(),
+                    )
+                }
+                EstimatorHistory::Full { .. } => unreachable!(),
             }
-            Histories::Full(_) => {
-                let count = good_count.min(applicable.len().saturating_sub(1)).max(1);
-                (&applicable[..count], &applicable[count..])
-            }
-            Histories::Uninitialized => {
-                return Err(ParzenError::InternalModel(
-                    "sampler is not initialized".into(),
-                ));
-            }
+        } else {
+            let count = good_count.min(applicable.len().saturating_sub(1)).max(1);
+            (&applicable[..count], &applicable[count..])
         };
 
-        if !self.caches.contains_key(&key) {
-            self.caches.insert(
-                key,
-                ModelCache {
-                    generation: u64::MAX,
-                    good: ProductMixture::empty(params, space)?,
-                    bad: ProductMixture::empty(params, space)?,
-                    workspace: ModelBuildWorkspace::default(),
-                    discrete_scores: Vec::new(),
-                },
-            );
+        let registry = self.registry.as_mut().ok_or_else(|| {
+            ParzenError::InternalModel("sampler registry is not initialized".into())
+        })?;
+        let state = &mut registry.states[estimator.0];
+        if state.cache.is_none() {
+            state.cache = Some(ModelCache {
+                generation: u64::MAX,
+                good: ProductMixture::empty(&state.prepared)?,
+                bad: ProductMixture::empty(&state.prepared)?,
+                workspace: ModelBuildWorkspace::default(),
+                discrete_scores: Vec::new(),
+            });
         }
-        let cache = self
-            .caches
-            .get_mut(&key)
-            .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
-        match &self.histories {
-            Histories::Full(history) => {
-                cache.good.rebuild(
-                    good_trials,
-                    space,
-                    self.config.prior_weight,
-                    self.config.weights,
-                    &mut cache.workspace,
-                    |trial, param, _| history.typed_value(trial, param),
-                )?;
-                cache.bad.rebuild(
-                    bad_trials,
-                    space,
-                    self.config.prior_weight,
-                    self.config.weights,
-                    &mut cache.workspace,
-                    |trial, param, _| history.typed_value(trial, param),
-                )?;
-            }
-            Histories::Bounded(_) => {
-                cache.good.rebuild(
-                    good_trials,
-                    space,
-                    self.config.prior_weight,
-                    self.config.weights,
-                    &mut cache.workspace,
-                    |trial, param, distribution| storage.typed_value(trial, param, distribution),
-                )?;
-                cache.bad.rebuild(
-                    bad_trials,
-                    space,
-                    self.config.prior_weight,
-                    self.config.weights,
-                    &mut cache.workspace,
-                    |trial, param, distribution| storage.typed_value(trial, param, distribution),
-                )?;
-            }
-            Histories::Uninitialized => {
-                return Err(ParzenError::InternalModel(
-                    "sampler is not initialized".into(),
-                ));
-            }
+        let cache = state.cache.as_mut().ok_or_else(|| {
+            ParzenError::InternalModel("estimator cache initialization failed".into())
+        })?;
+        if let Some(history) = &self.full_history {
+            cache.good.rebuild(
+                good_trials,
+                self.config.prior_weight,
+                self.config.weights,
+                &mut cache.workspace,
+                |trial, param| history.typed_value(trial, param.id),
+            )?;
+            cache.bad.rebuild(
+                bad_trials,
+                self.config.prior_weight,
+                self.config.weights,
+                &mut cache.workspace,
+                |trial, param| history.typed_value(trial, param.id),
+            )?;
+        } else {
+            cache.good.rebuild(
+                good_trials,
+                self.config.prior_weight,
+                self.config.weights,
+                &mut cache.workspace,
+                |trial, param| {
+                    storage
+                        .typed_value(trial, param.id, &param.distribution)
+                        .and_then(|value| param.prepare_canonical(value))
+                },
+            )?;
+            cache.bad.rebuild(
+                bad_trials,
+                self.config.prior_weight,
+                self.config.weights,
+                &mut cache.workspace,
+                |trial, param| {
+                    storage
+                        .typed_value(trial, param.id, &param.distribution)
+                        .and_then(|value| param.prepare_canonical(value))
+                },
+            )?;
         }
         cache.generation = generation;
         cache.discrete_scores.clear();
-        self.acquire(key)
+        self.acquire(estimator)
     }
 
     fn acquire(
         &mut self,
-        key: EstimatorKey,
+        estimator: EstimatorId,
     ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
-        let cache = self
-            .caches
-            .get_mut(&key)
-            .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
+        let cache = &mut self
+            .registry
+            .as_mut()
+            .ok_or_else(|| ParzenError::InternalModel("sampler is not initialized".into()))?
+            .states[estimator.0]
+            .cache
+            .as_mut()
+            .ok_or_else(|| ParzenError::InternalModel("estimator cache is missing".into()))?;
         let candidates = self.config.ei_candidates.get();
         let dimensions = cache.good.params_len();
         self.workspace.candidates.clear(candidates, dimensions);
@@ -543,60 +598,50 @@ impl TpeSampler {
             .candidate_from_values(&self.workspace.candidates.values[start..start + dimensions])
     }
 
-    fn generation_for(&self, key: EstimatorKey) -> Result<u64, ParzenError> {
-        match &self.histories {
-            Histories::Bounded(trackers) => trackers
-                .iter()
-                .find(|tracker| tracker.key == key)
-                .map(|tracker| tracker.history.generation())
-                .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into())),
-            Histories::Full(history) => Ok(history.generation()),
-            Histories::Uninitialized => Err(ParzenError::InternalModel(
-                "sampler is not initialized".into(),
-            )),
-        }
+    fn state(&self, estimator: EstimatorId) -> Result<&EstimatorState, ParzenError> {
+        self.registry
+            .as_ref()
+            .and_then(|registry| registry.states.get(estimator.0))
+            .ok_or_else(|| ParzenError::InternalModel("estimator is not initialized".into()))
     }
 
     fn applicable_history(
         &self,
-        key: EstimatorKey,
-        params: &[ParamId],
+        estimator: EstimatorId,
         materialize_bounded: bool,
     ) -> Result<(usize, u64, Vec<TrialId>), ParzenError> {
-        match &self.histories {
-            Histories::Bounded(trackers) => {
-                let tracker = trackers
-                    .iter()
-                    .find(|tracker| tracker.key == key)
-                    .ok_or_else(|| {
-                        ParzenError::InternalModel("bounded tracker is missing".into())
-                    })?;
+        let state = self.state(estimator)?;
+        match &state.history {
+            EstimatorHistory::Bounded(history) => {
                 let retained = if materialize_bounded {
-                    tracker.history.retained_trials().collect()
+                    history.retained_trials().collect()
                 } else {
                     Vec::new()
                 };
-                let seen = if tracker.history.is_empty() {
+                let seen = if history.is_empty() {
                     0
                 } else {
-                    tracker.history.seen()
+                    history.seen()
                 };
-                Ok((seen, tracker.history.generation(), retained))
+                Ok((seen, history.generation(), retained))
             }
-            Histories::Full(history) => {
+            EstimatorHistory::Full { seen, generation } => {
+                let history = self.full_history.as_ref().ok_or_else(|| {
+                    ParzenError::InternalModel("full history is not initialized".into())
+                })?;
                 let applicable: Vec<TrialId> = history
                     .iter()
                     .filter(|trial| {
-                        params
+                        state
+                            .prepared
+                            .params
                             .iter()
-                            .all(|param| history.typed_value(*trial, *param).is_some())
+                            .all(|param| history.typed_value(*trial, param.id).is_some())
                     })
                     .collect();
-                Ok((applicable.len(), history.generation(), applicable))
+                debug_assert_eq!(applicable.len(), *seen);
+                Ok((*seen, *generation, applicable))
             }
-            Histories::Uninitialized => Err(ParzenError::InternalModel(
-                "sampler is not initialized".into(),
-            )),
         }
     }
 
@@ -690,10 +735,31 @@ impl TpeSampler {
     }
 
     pub(crate) fn retained_history_len(&self) -> usize {
-        match &self.histories {
-            Histories::Bounded(trackers) => trackers.iter().map(|t| t.history.retained()).sum(),
-            Histories::Full(history) => history.len(),
-            Histories::Uninitialized => 0,
+        if let Some(history) = &self.full_history {
+            return history.len();
+        }
+        self.registry.as_ref().map_or(0, |registry| {
+            registry
+                .states
+                .iter()
+                .map(|state| state.history.retained())
+                .sum()
+        })
+    }
+}
+
+impl EstimatorHistory {
+    fn generation(&self) -> u64 {
+        match self {
+            Self::Bounded(history) => history.generation(),
+            Self::Full { generation, .. } => *generation,
+        }
+    }
+
+    fn retained(&self) -> usize {
+        match self {
+            Self::Bounded(history) => history.retained(),
+            Self::Full { seen, .. } => *seen,
         }
     }
 }
@@ -781,11 +847,106 @@ fn decode_categorical(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{CategoricalDistribution, Condition, FloatDistribution, IntDistribution};
 
     #[test]
     fn gamma_strategies_match_named_formulas() {
         let sampler = TpeSampler::new(TpeSamplerConfig::performance(1)).unwrap();
         assert_eq!(sampler.good_count(100).unwrap(), 10);
         assert_eq!(((100_f64.sqrt() * 0.25).ceil() as usize).min(25), 3);
+    }
+
+    #[test]
+    fn estimator_registry_uses_parameter_then_group_order() {
+        let mut space = SearchSpace::new();
+        let independent = space
+            .add(
+                "independent",
+                Distribution::Float(FloatDistribution::linear(-1.0, 1.0).unwrap()),
+            )
+            .unwrap();
+        let grouped_left = space
+            .add(
+                "grouped-left",
+                Distribution::Float(FloatDistribution::linear(-1.0, 1.0).unwrap()),
+            )
+            .unwrap();
+        let grouped_right = space
+            .add(
+                "grouped-right",
+                Distribution::Int(IntDistribution::linear(0, 8).unwrap()),
+            )
+            .unwrap();
+        let group = space.add_group([grouped_right, grouped_left]).unwrap();
+        let mut sampler = TpeSampler::new(
+            TpeSamplerConfig::performance(7).model(ModelStrategy::Grouped { max_group_size: 8 }),
+        )
+        .unwrap();
+        sampler.initialize(&space).unwrap();
+
+        let registry = sampler.registry.as_ref().unwrap();
+        assert_eq!(registry.states.len(), 2);
+        assert_eq!(
+            registry.states[0].prepared.key,
+            EstimatorKey::Param(independent)
+        );
+        assert_eq!(registry.states[1].prepared.key, EstimatorKey::Group(group));
+        assert_eq!(
+            registry.param_to_estimator[independent.0 as usize],
+            EstimatorId(0)
+        );
+        assert_eq!(
+            registry.param_to_estimator[grouped_left.0 as usize],
+            EstimatorId(1)
+        );
+        assert_eq!(
+            registry.param_to_estimator[grouped_right.0 as usize],
+            EstimatorId(1)
+        );
+        assert_eq!(
+            registry.group_to_estimator[group.0 as usize],
+            EstimatorId(1)
+        );
+        assert_eq!(registry.states[1].prepared.params[0].id, grouped_left);
+        assert_eq!(registry.states[1].prepared.params[1].id, grouped_right);
+    }
+
+    #[test]
+    fn inactive_estimator_generation_is_unchanged() {
+        let mut space = SearchSpace::new();
+        let parent = space
+            .add(
+                "kind",
+                Distribution::Categorical(CategoricalDistribution::new(2).unwrap()),
+            )
+            .unwrap();
+        let child = space
+            .add(
+                "depth",
+                Distribution::Int(IntDistribution::linear(1, 5).unwrap()),
+            )
+            .unwrap();
+        space
+            .add_condition(
+                child,
+                Condition::CategoricalIn {
+                    parent,
+                    choices: vec![1].into_boxed_slice(),
+                },
+            )
+            .unwrap();
+        let mut sampler = TpeSampler::new(TpeSamplerConfig::performance(11)).unwrap();
+        sampler.initialize(&space).unwrap();
+        let mut storage = TrialStorage::default();
+        let trial = storage
+            .push(&[(parent, ParamValue::Categorical(0))], 1.0)
+            .unwrap();
+        sampler.on_trial_added(trial, &storage, Direction::Minimize);
+
+        let registry = sampler.registry.as_ref().unwrap();
+        assert_eq!(registry.states[0].history.generation(), 1);
+        assert_eq!(registry.states[1].history.generation(), 0);
+        assert_eq!(registry.states[0].history.retained(), 1);
+        assert_eq!(registry.states[1].history.retained(), 0);
     }
 }
