@@ -183,6 +183,7 @@ struct ModelCache {
     good: ProductMixture,
     bad: ProductMixture,
     workspace: ModelBuildWorkspace,
+    discrete_scores: Vec<(i64, f64, f64)>,
 }
 
 /// Seeded Tree-structured Parzen Estimator sampler.
@@ -407,6 +408,7 @@ impl TpeSampler {
                     good: ProductMixture::empty(params, space)?,
                     bad: ProductMixture::empty(params, space)?,
                     workspace: ModelBuildWorkspace::default(),
+                    discrete_scores: Vec::new(),
                 },
             );
         }
@@ -458,6 +460,7 @@ impl TpeSampler {
             }
         }
         cache.generation = generation;
+        cache.discrete_scores.clear();
         self.acquire(key)
     }
 
@@ -467,7 +470,7 @@ impl TpeSampler {
     ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
         let cache = self
             .caches
-            .get(&key)
+            .get_mut(&key)
             .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
         let candidates = self.config.ei_candidates.get();
         let dimensions = cache.good.params_len();
@@ -486,10 +489,22 @@ impl TpeSampler {
             .chunks_exact(dimensions)
             .enumerate()
         {
-            let duplicate = matches!(candidate, [ParamValue::Int(_)])
-                .then(|| self.workspace.candidates.previous_duplicate(index))
-                .flatten();
-            let (good, bad) = if let Some(previous) = duplicate {
+            let integer = match candidate {
+                [ParamValue::Int(value)] => Some(*value),
+                _ => None,
+            };
+            let persisted = integer.and_then(|value| {
+                cache
+                    .discrete_scores
+                    .iter()
+                    .find(|(cached, _, _)| *cached == value)
+                    .map(|(_, good, bad)| (*good, *bad))
+            });
+            let duplicate =
+                integer.and_then(|_| self.workspace.candidates.previous_duplicate(index));
+            let (good, bad) = if let Some(scores) = persisted {
+                scores
+            } else if let Some(previous) = duplicate {
                 (
                     self.workspace.candidates.good_scores[previous],
                     self.workspace.candidates.bad_scores[previous],
@@ -504,6 +519,13 @@ impl TpeSampler {
                         .log_pdf_positional(candidate, &mut self.workspace.bad_components)?,
                 )
             };
+            if let Some(value) = integer
+                && persisted.is_none()
+                && duplicate.is_none()
+                && cache.discrete_scores.len() < 4_096
+            {
+                cache.discrete_scores.push((value, good, bad));
+            }
             self.workspace.candidates.good_scores.push(good);
             self.workspace.candidates.bad_scores.push(bad);
             let score = good - bad;
