@@ -57,6 +57,10 @@ struct CategoricalMarginal {
 }
 
 impl ProductMixture {
+    pub(crate) fn params_len(&self) -> usize {
+        self.params.len()
+    }
+
     pub(crate) fn empty(params: &[ParamId], space: &SearchSpace) -> Result<Self, ParzenError> {
         let kernels = params
             .iter()
@@ -224,43 +228,40 @@ impl ProductMixture {
         Ok(())
     }
 
-    pub(crate) fn sample(
+    pub(crate) fn sample_values(
         &self,
         rng: &mut StdRng,
-    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        values: &mut Vec<ParamValue>,
+    ) -> Result<(), ParzenError> {
         if let Some(marginal) = &self.categorical_marginal {
             let draw = rng.random::<f64>();
             let value = marginal
                 .cumulative
                 .partition_point(|cumulative| *cumulative <= draw)
                 .min(marginal.cumulative.len() - 1);
-            return Ok(smallvec::smallvec![(
-                self.params[0],
-                ParamValue::Categorical(value as u32)
-            )]);
+            values.push(ParamValue::Categorical(value as u32));
+            return Ok(());
         }
         let draw = rng.random::<f64>();
         let component = self
             .cumulative_weights
             .partition_point(|cumulative| *cumulative <= draw)
             .min(self.log_weights.len() - 1);
-        self.params
-            .iter()
-            .copied()
-            .zip(&self.kernels)
-            .map(|(param, kernel)| Ok((param, kernel.sample(component, rng)?)))
-            .collect()
+        for kernel in &self.kernels {
+            values.push(kernel.sample(component, rng)?);
+        }
+        Ok(())
     }
 
-    pub(crate) fn log_pdf(
+    pub(crate) fn log_pdf_positional(
         &self,
-        candidate: &[(ParamId, ParamValue)],
+        candidate: &[ParamValue],
         scratch: &mut Vec<f64>,
     ) -> Result<f64, ParzenError> {
         if let Some(marginal) = &self.categorical_marginal {
             let value = candidate
                 .first()
-                .and_then(|(_, value)| value.as_categorical())
+                .and_then(|value| value.as_categorical())
                 .ok_or_else(|| {
                     ParzenError::InternalModel("categorical candidate is missing".into())
                 })?;
@@ -270,19 +271,34 @@ impl ProductMixture {
                 .copied()
                 .unwrap_or(f64::NEG_INFINITY));
         }
+        if candidate.len() != self.kernels.len() {
+            return Err(ParzenError::InternalModel(
+                "candidate dimension count does not match estimator".into(),
+            ));
+        }
         scratch.clear();
         scratch.extend_from_slice(&self.log_weights);
-        for (param, kernel) in self.params.iter().zip(&self.kernels) {
-            let value = candidate
-                .iter()
-                .find(|(candidate, _)| candidate == param)
-                .map(|(_, value)| *value)
-                .ok_or_else(|| {
-                    ParzenError::InternalModel("candidate dimension is missing".into())
-                })?;
+        for (value, kernel) in candidate.iter().copied().zip(&self.kernels) {
             kernel.add_log_probabilities(value, scratch)?;
         }
         Ok(math::logsumexp(scratch))
+    }
+
+    pub(crate) fn candidate_from_values(
+        &self,
+        values: &[ParamValue],
+    ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
+        if values.len() != self.params.len() {
+            return Err(ParzenError::InternalModel(
+                "selected candidate dimension count does not match estimator".into(),
+            ));
+        }
+        Ok(self
+            .params
+            .iter()
+            .copied()
+            .zip(values.iter().copied())
+            .collect())
     }
 }
 

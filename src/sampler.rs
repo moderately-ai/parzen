@@ -442,24 +442,44 @@ impl TpeSampler {
             .caches
             .get(&key)
             .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
+        let candidates = self.config.ei_candidates.get();
+        let dimensions = cache.good.params_len();
+        self.workspace.candidates.clear(candidates, dimensions);
+        for _ in 0..candidates {
+            cache
+                .good
+                .sample_values(&mut self.rng, &mut self.workspace.candidates.values)?;
+        }
         let mut best_score = f64::NEG_INFINITY;
         let mut best = None;
-        for _ in 0..self.config.ei_candidates.get() {
-            let candidate = cache.good.sample(&mut self.rng)?;
-            let score = cache
+        for (index, candidate) in self
+            .workspace
+            .candidates
+            .values
+            .chunks_exact(dimensions)
+            .enumerate()
+        {
+            let good = cache
                 .good
-                .log_pdf(&candidate, &mut self.workspace.good_scores)?
-                - cache
-                    .bad
-                    .log_pdf(&candidate, &mut self.workspace.bad_scores)?;
+                .log_pdf_positional(candidate, &mut self.workspace.good_components)?;
+            let bad = cache
+                .bad
+                .log_pdf_positional(candidate, &mut self.workspace.bad_components)?;
+            self.workspace.candidates.good_scores.push(good);
+            self.workspace.candidates.bad_scores.push(bad);
+            let score = good - bad;
             if score.is_finite() && score > best_score {
                 best_score = score;
-                best = Some(candidate);
+                best = Some(index);
             }
         }
-        best.ok_or_else(|| {
+        let best = best.ok_or_else(|| {
             ParzenError::InternalModel("acquisition produced no finite candidate".into())
-        })
+        })?;
+        let start = best * dimensions;
+        cache
+            .good
+            .candidate_from_values(&self.workspace.candidates.values[start..start + dimensions])
     }
 
     fn generation_for(&self, key: EstimatorKey) -> Result<u64, ParzenError> {
