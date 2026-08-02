@@ -81,6 +81,7 @@ struct DriverCli {
     scenario: Option<Scenario>,
     operation: Option<Operation>,
     history: Option<usize>,
+    dimensions: Option<usize>,
     rounds: usize,
     samples: Option<usize>,
     warmup: Option<usize>,
@@ -137,6 +138,7 @@ fn run() -> HarnessResult<()> {
             .is_none_or(|operation| case.operation == operation)
     });
     apply_history_filter(&cli.command, cli.history, &mut cases);
+    apply_dimension_filter(&cli.command, cli.dimensions, &mut cases);
     for case in &mut cases {
         if let Some(history) = cli.history
             && !matches!(cli.command.as_str(), "scaling" | "memory" | "full")
@@ -276,6 +278,7 @@ where
         scenario: None,
         operation: None,
         history: None,
+        dimensions: None,
         rounds: 3,
         samples: None,
         warmup: None,
@@ -320,6 +323,14 @@ where
                     value
                         .into_string()
                         .map_err(|_| "history must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--dimensions" => {
+                cli.dimensions = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "dimensions must be UTF-8")?
                         .parse()?,
                 )
             }
@@ -375,6 +386,9 @@ where
     if cli.history == Some(0) {
         return Err("history must be positive".into());
     }
+    if cli.dimensions == Some(0) {
+        return Err("dimensions must be positive".into());
+    }
     if cli.samples == Some(0) {
         return Err("samples must be positive".into());
     }
@@ -396,7 +410,8 @@ where
 
 fn usage() -> &'static str {
     "compare <smoke|characterize|timing|scaling|quality|memory|full|report JSONL> \
-     [--backend all|NAME] [--scenario NAME] [--operation NAME] [--history N] \
+     [--backend all|NAME[,NAME...]] [--scenario NAME] [--operation NAME] \
+     [--history N] [--dimensions N] \
      [--output PATH] [--machine-label LABEL] [--rounds N] \
      [--samples N] [--warmup N] [--calibration-ms N] [--timeout-seconds N] \
      [--quality-seeds N] [--memory-bin-dir PATH]"
@@ -406,12 +421,23 @@ fn select_backends(selection: &str) -> HarnessResult<Vec<BackendSpec>> {
     if selection == "all" {
         return Ok(BACKENDS.to_vec());
     }
+    let requested = selection.split(',').collect::<Vec<_>>();
+    if requested.iter().any(|name| name.is_empty()) {
+        return Err("backend selection contains an empty name".into());
+    }
+    for name in &requested {
+        if *name != "parzen" && !BACKENDS.iter().any(|backend| backend.label == *name) {
+            return Err(format!("unknown backend `{name}`").into());
+        }
+    }
     let selected = BACKENDS
         .iter()
         .copied()
         .filter(|backend| {
-            backend.label == selection
-                || (selection == "parzen" && backend.label.starts_with("parzen/"))
+            requested.iter().any(|name| {
+                backend.label == *name
+                    || (*name == "parzen" && backend.label.starts_with("parzen/"))
+            })
         })
         .collect::<Vec<_>>();
     if selected.is_empty() {
@@ -663,6 +689,18 @@ fn apply_history_filter(command: &str, history: Option<usize>, cases: &mut Vec<C
     }
 }
 
+fn apply_dimension_filter(command: &str, dimensions: Option<usize>, cases: &mut Vec<Case>) {
+    if let Some(dimensions) = dimensions {
+        if matches!(command, "scaling" | "full") {
+            cases.retain(|case| case.dimensions == dimensions);
+        } else {
+            for case in cases {
+                case.dimensions = dimensions;
+            }
+        }
+    }
+}
+
 fn print_work_plan(command: &str, cases: &[Case], backend_count: usize, timing_rounds: usize) {
     let invocations = cases
         .iter()
@@ -757,6 +795,7 @@ mod tests {
         assert!(parse_cli(["quality", "--quality-seeds", "0"]).is_err());
         assert!(parse_cli(["quality", "--quality-seeds", "33"]).is_err());
         assert!(parse_cli(["timing", "--history", "0"]).is_err());
+        assert!(parse_cli(["timing", "--dimensions", "0"]).is_err());
     }
 
     #[test]
@@ -769,11 +808,28 @@ mod tests {
             "suggest",
             "--history",
             "100",
+            "--dimensions",
+            "8",
         ])
         .expect("CLI");
         assert_eq!(cli.scenario, Some(Scenario::IndependentFloat));
         assert_eq!(cli.operation, Some(Operation::Suggest));
         assert_eq!(cli.history, Some(100));
+        assert_eq!(cli.dimensions, Some(8));
+    }
+
+    #[test]
+    fn backend_selection_accepts_exact_comma_separated_subset() {
+        let selected = select_backends("parzen,optimizer").expect("backends");
+        assert_eq!(
+            selected
+                .iter()
+                .map(|backend| backend.label)
+                .collect::<Vec<_>>(),
+            vec!["parzen/full", "parzen/bounded", "optimizer"]
+        );
+        assert!(select_backends("parzen,unknown").is_err());
+        assert!(select_backends("parzen,").is_err());
     }
 
     #[test]
@@ -783,5 +839,18 @@ mod tests {
         apply_history_filter("memory", Some(1_000), &mut cases);
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].history, 1_000);
+    }
+
+    #[test]
+    fn dimension_filter_selects_scaling_case_and_overrides_timing_case() {
+        let mut scaling = cases_for("scaling").expect("cases");
+        scaling.retain(|case| case.scenario == Scenario::IndependentFloat);
+        apply_dimension_filter("scaling", Some(8), &mut scaling);
+        assert_eq!(scaling.len(), 5);
+        assert!(scaling.iter().all(|case| case.dimensions == 8));
+
+        let mut timing = vec![base_case(Scenario::IndependentFloat, Operation::Cycle)];
+        apply_dimension_filter("timing", Some(16), &mut timing);
+        assert_eq!(timing[0].dimensions, 16);
     }
 }
