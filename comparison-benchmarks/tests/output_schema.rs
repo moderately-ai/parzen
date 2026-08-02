@@ -1,10 +1,10 @@
 use parzen_comparison_benchmarks::{
     backends::parzen_backend::ParzenBackend,
     backends::tpe_backend::TpeBackend,
-    cli::{BackendCli, OutputFormat, RunConfig},
+    cli::{BackendCli, OutputFormat, ProfileWorkload, RunConfig},
     measurement::execute,
     output::{BenchmarkRecord, SCHEMA_VERSION},
-    report::write_markdown,
+    report::{read_jsonl, write_markdown},
     scenarios::{Operation, Scenario},
 };
 
@@ -159,4 +159,111 @@ fn markdown_generation_is_deterministic_for_fixed_records() {
     write_markdown(&records, &mut first).expect("first report");
     write_markdown(&records, &mut second).expect("second report");
     assert_eq!(first, second);
+}
+
+#[test]
+fn fixed_suggest_profile_keeps_history_constant() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Profile,
+            profile_workload: ProfileWorkload::FixedSuggest,
+            profile_seconds: 1,
+            history: 10,
+            dimensions: 1,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+    };
+    let record = execute::<ParzenBackend>(&cli).expect("fixed profile");
+    assert_eq!(record.profile_workload, Some(ProfileWorkload::FixedSuggest));
+    assert_eq!(record.profile_start_observations, Some(10));
+    assert_eq!(record.profile_end_observations, Some(10));
+    assert!(
+        record
+            .profile_operations
+            .is_some_and(|operations| operations > 0)
+    );
+    assert_ne!(record.result_checksum, 0);
+}
+
+#[test]
+fn cycle_profile_records_exact_history_growth() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Profile,
+            profile_workload: ProfileWorkload::Cycle,
+            profile_seconds: 1,
+            history: 10,
+            dimensions: 1,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+    };
+    let record = execute::<ParzenBackend>(&cli).expect("cycle profile");
+    let operations = record.profile_operations.expect("operations");
+    assert!(operations > 0);
+    assert_eq!(record.profile_start_observations, Some(10));
+    assert_eq!(record.profile_end_observations, Some(10 + operations));
+}
+
+#[test]
+fn profile_report_identifies_the_workload() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Profile,
+            profile_workload: ProfileWorkload::FixedSuggest,
+            profile_seconds: 1,
+            history: 10,
+            dimensions: 1,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+    };
+    let mut competitor = execute::<ParzenBackend>(&cli).expect("parzen profile");
+    competitor.backend = "comparison-probe".to_owned();
+    let records = [execute::<ParzenBackend>(&cli).expect("profile"), competitor];
+    let mut markdown = Vec::new();
+    write_markdown(&records, &mut markdown).expect("report");
+    let markdown = String::from_utf8(markdown).expect("utf8");
+    assert!(markdown.contains("Profile workload: `fixed-suggest`"));
+    assert!(markdown.contains("Start observations"));
+}
+
+#[test]
+fn report_reader_rejects_old_schema_versions() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Cycle,
+            history: 10,
+            dimensions: 1,
+            iterations: 1,
+            samples: 1,
+            warmup: 0,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+    };
+    let mut record = execute::<ParzenBackend>(&cli).expect("record");
+    record.schema_version = SCHEMA_VERSION - 1;
+    let path = std::env::temp_dir().join(format!(
+        "parzen-schema-test-{}-{}.jsonl",
+        std::process::id(),
+        record.fixture_checksum
+    ));
+    std::fs::write(
+        &path,
+        format!("{}\n", serde_json::to_string(&record).expect("json")),
+    )
+    .expect("write fixture");
+    let error = read_jsonl(&path).expect_err("old schema must fail");
+    std::fs::remove_file(path).expect("remove fixture");
+    assert!(
+        error
+            .to_string()
+            .contains("unsupported JSONL schema version")
+    );
 }

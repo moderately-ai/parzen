@@ -3,7 +3,7 @@ use std::{hint::black_box, time::Instant};
 use crate::{
     HarnessResult,
     adapter::Backend,
-    cli::{BackendCli, RunConfig},
+    cli::{BackendCli, ProfileWorkload, RunConfig},
     fixtures::{Fixture, checksum_values},
     objectives::{evaluate, optimum},
     output::{BenchmarkRecord, Environment, QualityStats, SCHEMA_VERSION, TimingStats},
@@ -51,6 +51,10 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         fixture_checksum: fixture.checksum,
         result_checksum: 0,
         observations: 0,
+        profile_workload: (config.operation == Operation::Profile)
+            .then_some(config.profile_workload),
+        profile_start_observations: None,
+        profile_end_observations: None,
         profile_operations: None,
         profile_wall_seconds: None,
         comparison_round: None,
@@ -503,18 +507,49 @@ fn run_profile<B: Backend>(
 ) -> HarnessResult<()> {
     let mut backend = B::create(config)?;
     ingest_fixture(&mut backend, fixture)?;
+    if config.profile_workload == ProfileWorkload::FixedSuggest {
+        let values = black_box(backend.suggest()?);
+        black_box(values);
+        backend.abort()?;
+    }
+    let start_observations = backend.observations();
     let started = Instant::now();
-    let mut checksum = 0_u64;
+    let mut checksum = config.profile_workload.checksum_tag();
     let mut operations = 0_usize;
     while started.elapsed() < config.profile_duration() {
-        let values = black_box(backend.suggest()?);
-        let objective = black_box(evaluate(config.scenario, &values)?);
-        checksum = checksum.rotate_left(7) ^ checksum_values(&values) ^ objective.to_bits();
-        backend.complete(objective)?;
+        match config.profile_workload {
+            ProfileWorkload::FixedSuggest => {
+                let values = black_box(backend.suggest()?);
+                checksum = checksum.rotate_left(7) ^ checksum_values(&values);
+                backend.abort()?;
+            }
+            ProfileWorkload::Cycle => {
+                let values = black_box(backend.suggest()?);
+                let objective = black_box(evaluate(config.scenario, &values)?);
+                checksum = checksum.rotate_left(7) ^ checksum_values(&values) ^ objective.to_bits();
+                backend.complete(objective)?;
+            }
+        }
         operations += 1;
     }
+    let end_observations = backend.observations();
+    match config.profile_workload {
+        ProfileWorkload::FixedSuggest if end_observations != start_observations => {
+            return Err("fixed-suggest profile changed the observation count".into());
+        }
+        ProfileWorkload::Cycle
+            if end_observations.saturating_sub(start_observations) != operations =>
+        {
+            return Err(
+                "cycle profile observation growth did not match completed operations".into(),
+            );
+        }
+        _ => {}
+    }
     record.result_checksum = checksum;
-    record.observations = backend.observations();
+    record.observations = end_observations;
+    record.profile_start_observations = Some(start_observations);
+    record.profile_end_observations = Some(end_observations);
     record.profile_operations = Some(operations);
     record.profile_wall_seconds = Some(started.elapsed().as_secs_f64());
     Ok(())

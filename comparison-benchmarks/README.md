@@ -168,6 +168,7 @@ samply record \
   -- comparison-benchmarks/target/profiling/bench-parzen \
   --scenario independent-float \
   --operation profile \
+  --profile-workload cycle \
   --history 10000 \
   --dimensions 16 \
   --profile-seconds 30
@@ -184,6 +185,13 @@ python3 \
 Profiled wall time is never benchmark evidence. Separate idle from active CPU
 samples, inspect self and inclusive attribution, and read the source behind
 every material Parzen frame before making an optimization claim.
+
+Use `--profile-workload fixed-suggest` to warm the backend once and repeatedly
+exercise suggestion plus public abort/reset against an unchanged history. Use
+`--profile-workload cycle` (the default) for the state-growing public
+suggest/evaluate/complete lifecycle. Profile records include starting and ending
+observation counts so a fixed-history capture cannot silently become a growing
+one.
 
 ## Curating evidence
 

@@ -5,7 +5,12 @@ use std::{
     path::Path,
 };
 
-use crate::{HarnessResult, output::BenchmarkRecord, scenarios::ParzenHistory};
+use crate::{
+    HarnessResult,
+    cli::ProfileWorkload,
+    output::{BenchmarkRecord, SCHEMA_VERSION},
+    scenarios::ParzenHistory,
+};
 
 pub fn read_jsonl(path: &Path) -> HarnessResult<Vec<BenchmarkRecord>> {
     let input = BufReader::new(File::open(path)?);
@@ -14,9 +19,18 @@ pub fn read_jsonl(path: &Path) -> HarnessResult<Vec<BenchmarkRecord>> {
         .enumerate()
         .map(|(index, line)| {
             let line = line?;
-            serde_json::from_str(&line).map_err(|error| {
-                format!("invalid JSONL record on line {}: {error}", index + 1).into()
-            })
+            let record: BenchmarkRecord = serde_json::from_str(&line)
+                .map_err(|error| format!("invalid JSONL record on line {}: {error}", index + 1))?;
+            if record.schema_version != SCHEMA_VERSION {
+                return Err(format!(
+                    "unsupported JSONL schema version {} on line {}; expected {}",
+                    record.schema_version,
+                    index + 1,
+                    SCHEMA_VERSION
+                )
+                .into());
+            }
+            Ok(record)
         })
         .collect()
 }
@@ -29,12 +43,15 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
         "> Absolute timings are machine-specific. Compare only runs captured on the same machine. Timing and quality are reported independently; no combined score is calculated."
     )?;
     let mut grouped =
-        BTreeMap::<(String, String, usize, usize, usize), Vec<&BenchmarkRecord>>::new();
+        BTreeMap::<(String, String, String, usize, usize, usize), Vec<&BenchmarkRecord>>::new();
     for record in records {
         grouped
             .entry((
                 record.scenario.to_string(),
                 record.operation.to_string(),
+                record
+                    .profile_workload
+                    .map_or_else(String::new, |workload| workload.to_string()),
                 record.config.history,
                 record.config.dimensions,
                 record.config.budget,
@@ -42,7 +59,7 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
             .or_default()
             .push(record);
     }
-    for ((scenario, operation, history, dimensions, budget), group) in grouped {
+    for ((scenario, operation, profile_workload, history, dimensions, budget), group) in grouped {
         let parzen_supported = group.iter().any(|record| {
             record.backend == "parzen" && record.supported && record.execution_error.is_none()
         });
@@ -55,17 +72,51 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
         writeln!(output)?;
         writeln!(output, "## {scenario} / {operation}")?;
         writeln!(output)?;
+        if !profile_workload.is_empty() {
+            writeln!(output, "Profile workload: `{profile_workload}`.")?;
+            writeln!(output)?;
+        }
         writeln!(
             output,
             "History: {history}; dimensions: {dimensions}; budget: {budget}."
         )?;
         writeln!(output)?;
-        if operation == "quality" {
+        if operation == "profile" {
+            write_profile_table(&mut output, &group)?;
+        } else if operation == "quality" {
             write_quality_table(&mut output, &group)?;
         } else if operation == "memory" {
             write_memory_table(&mut output, &group)?;
         } else {
             write_timing_table(&mut output, &group)?;
+        }
+    }
+    Ok(())
+}
+
+fn write_profile_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> HarnessResult<()> {
+    writeln!(
+        output,
+        "| Backend | Status | Workload | Operations | Start observations | End observations | Profile seconds |"
+    )?;
+    writeln!(output, "|---|---|---|---:|---:|---:|---:|")?;
+    for (backend, group) in records_by_backend(records) {
+        let record = group
+            .iter()
+            .find(|record| record.supported && record.execution_error.is_none());
+        if let Some(record) = record {
+            let workload = record.profile_workload.unwrap_or(ProfileWorkload::Cycle);
+            writeln!(
+                output,
+                "| {backend} | supported | {workload} | {} | {} | {} | {:.3} |",
+                record.profile_operations.unwrap_or(0),
+                record.profile_start_observations.unwrap_or(0),
+                record.profile_end_observations.unwrap_or(0),
+                record.profile_wall_seconds.unwrap_or(0.0),
+            )?;
+        } else {
+            let status = record_failure_status(&group);
+            writeln!(output, "| {backend} | {status} | — | — | — | — | — |")?;
         }
     }
     Ok(())

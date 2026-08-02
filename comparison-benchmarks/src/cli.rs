@@ -14,6 +14,44 @@ pub enum OutputFormat {
     Json,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ProfileWorkload {
+    FixedSuggest,
+    Cycle,
+}
+
+impl ProfileWorkload {
+    #[must_use]
+    pub const fn checksum_tag(self) -> u64 {
+        match self {
+            Self::FixedSuggest => 0x4649_5845_445f_5355,
+            Self::Cycle => 0x4359_434c_455f_5052,
+        }
+    }
+}
+
+impl FromStr for ProfileWorkload {
+    type Err = crate::HarnessError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "fixed-suggest" => Ok(Self::FixedSuggest),
+            "cycle" => Ok(Self::Cycle),
+            _ => Err(format!("unknown profile workload `{value}`").into()),
+        }
+    }
+}
+
+impl std::fmt::Display for ProfileWorkload {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::FixedSuggest => formatter.write_str("fixed-suggest"),
+            Self::Cycle => formatter.write_str("cycle"),
+        }
+    }
+}
+
 impl FromStr for OutputFormat {
     type Err = crate::HarnessError;
 
@@ -39,6 +77,7 @@ pub struct RunConfig {
     pub warmup: usize,
     pub calibration_ms: u64,
     pub profile_seconds: u64,
+    pub profile_workload: ProfileWorkload,
     pub parzen_history: ParzenHistory,
     pub machine_label: String,
 }
@@ -57,6 +96,7 @@ impl Default for RunConfig {
             warmup: 1,
             calibration_ms: 100,
             profile_seconds: 30,
+            profile_workload: ProfileWorkload::Cycle,
             parzen_history: ParzenHistory::Full,
             machine_label: "unlabelled".to_owned(),
         }
@@ -108,6 +148,7 @@ impl BackendCli {
     {
         let mut config = RunConfig::default();
         let mut format = OutputFormat::Human;
+        let mut profile_workload_explicit = false;
         let mut args = args.into_iter().map(Into::into);
         while let Some(flag) = args.next() {
             let flag = flag.into_string().map_err(|_| "arguments must be UTF-8")?;
@@ -131,6 +172,10 @@ impl BackendCli {
                 "--warmup" => config.warmup = value()?.parse()?,
                 "--calibration-ms" => config.calibration_ms = value()?.parse()?,
                 "--profile-seconds" => config.profile_seconds = value()?.parse()?,
+                "--profile-workload" => {
+                    config.profile_workload = value()?.parse()?;
+                    profile_workload_explicit = true;
+                }
                 "--parzen-history" => config.parzen_history = value()?.parse()?,
                 "--machine-label" => config.machine_label = value()?,
                 "--format" => format = value()?.parse()?,
@@ -141,6 +186,9 @@ impl BackendCli {
         if config.dimensions == 0 {
             config.dimensions = config.scenario.default_dimensions();
         }
+        if profile_workload_explicit && config.operation != Operation::Profile {
+            return Err("--profile-workload requires --operation profile".into());
+        }
         config.validate()?;
         Ok(Self { config, format })
     }
@@ -149,7 +197,8 @@ impl BackendCli {
     pub const fn usage() -> &'static str {
         "options: --scenario NAME --operation NAME --history N --dimensions N \
          --iterations N --budget N --seed N --samples N --warmup N \
-         --calibration-ms N --profile-seconds N --parzen-history full|bounded \
+         --calibration-ms N --profile-seconds N \
+         --profile-workload fixed-suggest|cycle --parzen-history full|bounded \
          --format human|json"
     }
 }
@@ -182,5 +231,26 @@ mod tests {
         assert_eq!(cli.config.samples, 5);
         assert_eq!(cli.config.warmup, 1);
         assert_eq!(cli.config.calibration_ms, 100);
+    }
+
+    #[test]
+    fn profile_workloads_parse_and_cycle_is_the_default() {
+        let default = BackendCli::parse(["--operation", "profile"]).expect("default profile");
+        assert_eq!(default.config.profile_workload, ProfileWorkload::Cycle);
+        let fixed = BackendCli::parse([
+            "--operation",
+            "profile",
+            "--profile-workload",
+            "fixed-suggest",
+        ])
+        .expect("fixed profile");
+        assert_eq!(fixed.config.profile_workload, ProfileWorkload::FixedSuggest);
+    }
+
+    #[test]
+    fn profile_workload_is_rejected_for_non_profile_operations() {
+        assert!(
+            BackendCli::parse(["--operation", "cycle", "--profile-workload", "cycle"]).is_err()
+        );
     }
 }

@@ -10,7 +10,7 @@ use std::{
 
 use parzen_comparison_benchmarks::{
     HarnessResult,
-    cli::RunConfig,
+    cli::{ProfileWorkload, RunConfig},
     output::{BenchmarkRecord, ENVIRONMENT_SNAPSHOT_VAR, Environment},
     report::{read_jsonl, write_markdown},
     scenarios::{Operation, ParzenHistory, QUALITY_SEEDS, Scenario},
@@ -524,6 +524,7 @@ fn run_config(backend: BackendSpec, case: &Case, machine_label: &str) -> RunConf
         warmup: case.warmup,
         calibration_ms: case.calibration_ms,
         profile_seconds: 30,
+        profile_workload: ProfileWorkload::Cycle,
         parzen_history: backend.history,
         machine_label: machine_label.to_owned(),
     }

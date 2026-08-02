@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     HarnessResult,
-    cli::{OutputFormat, RunConfig},
+    cli::{OutputFormat, ProfileWorkload, RunConfig},
     scenarios::{Operation, Scenario},
 };
 
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 pub const ENVIRONMENT_SNAPSHOT_VAR: &str = "PARZEN_BENCH_ENVIRONMENT_SNAPSHOT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +92,9 @@ pub struct BenchmarkRecord {
     pub fixture_checksum: u64,
     pub result_checksum: u64,
     pub observations: usize,
+    pub profile_workload: Option<ProfileWorkload>,
+    pub profile_start_observations: Option<usize>,
+    pub profile_end_observations: Option<usize>,
     pub profile_operations: Option<usize>,
     pub profile_wall_seconds: Option<f64>,
     pub comparison_round: Option<usize>,
@@ -123,6 +126,10 @@ impl BenchmarkRecord {
             fixture_checksum: 0,
             result_checksum: 0,
             observations: 0,
+            profile_workload: (config.operation == Operation::Profile)
+                .then_some(config.profile_workload),
+            profile_start_observations: None,
+            profile_end_observations: None,
             profile_operations: None,
             profile_wall_seconds: None,
             comparison_round: None,
@@ -173,6 +180,10 @@ impl BenchmarkRecord {
             fixture_checksum: 0,
             result_checksum: 0,
             observations: 0,
+            profile_workload: (config.operation == Operation::Profile)
+                .then_some(config.profile_workload),
+            profile_start_observations: None,
+            profile_end_observations: None,
             profile_operations: None,
             profile_wall_seconds: None,
             comparison_round: None,
