@@ -1,5 +1,6 @@
 /target/
 /target-memory/
+/target-calibration/
 /results/raw/
 *.profile.json
 *.profile.json.gz

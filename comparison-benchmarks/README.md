@@ -188,6 +188,22 @@ Profiled wall time is never benchmark evidence. Separate idle from active CPU
 samples, inspect self and inclusive attribution, and read the source behind
 every material Parzen frame before making an optimization claim.
 
+## Hardware counters
+
+`calibrate-machine` provides an AVX2/FMA throughput probe and a single-threaded
+STREAM-style triad. Build only this calibration binary with native CPU code
+generation; production comparison binaries retain their ordinary release
+flags. On Balthasar, `scripts/balthasar-counters.sh` records five separate
+repetitions per counter group, pins targets to CPU 7, audits the temporary
+`kernel.perf_event_paranoid` change, and restores its exact original value.
+
+Treat counter-run wall time as metadata. Call the resulting chart a hardware
+roofline only after retired FLOPs agree with the FMA calibration within 20%,
+the traffic counter agrees with the known triad traffic within 25%, event
+running time is at least 95%, coefficients of variation are at most 10%, and
+CPU migrations are zero. Otherwise report the validated IPC/cache/traffic
+proxies and empirical runtime envelope without a roofline label.
+
 Use `--profile-workload fixed-suggest` to warm the backend once and repeatedly
 exercise suggestion plus public abort/reset against an unchanged history. Use
 `--profile-workload cycle` (the default) for the state-growing public
