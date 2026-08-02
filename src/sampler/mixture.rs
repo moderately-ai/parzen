@@ -44,86 +44,141 @@ pub(crate) struct ProductMixture {
     categorical_marginal: Option<CategoricalMarginal>,
 }
 
+#[derive(Default)]
+pub(crate) struct ModelBuildWorkspace {
+    component_weights: Vec<f64>,
+    values: Vec<ParamValue>,
+    order: Vec<usize>,
+}
+
 struct CategoricalMarginal {
     cumulative: Vec<f64>,
     log_probabilities: Vec<f64>,
 }
 
 impl ProductMixture {
-    pub(crate) fn build(
-        params: &[ParamId],
+    pub(crate) fn empty(params: &[ParamId], space: &SearchSpace) -> Result<Self, ParzenError> {
+        let kernels = params
+            .iter()
+            .map(|param| {
+                let distribution = space.parameters[param.0 as usize].distribution.clone();
+                match distribution {
+                    Distribution::Categorical(dist) => Ok(KernelSet::Categorical {
+                        choices: dist.num_choices(),
+                        observed: Vec::new(),
+                        log_hit: 0.0,
+                        log_miss: 0.0,
+                    }),
+                    Distribution::Float(dist) => {
+                        Ok(KernelSet::Numeric(NumericKernels::empty_float(dist)?))
+                    }
+                    Distribution::Int(dist) => {
+                        Ok(KernelSet::Numeric(NumericKernels::empty_int(dist)?))
+                    }
+                }
+            })
+            .collect::<Result<Vec<_>, ParzenError>>()?;
+        let categorical_marginal = matches!(kernels.as_slice(), [KernelSet::Categorical { .. }])
+            .then(|| CategoricalMarginal {
+                cumulative: Vec::new(),
+                log_probabilities: Vec::new(),
+            });
+        Ok(Self {
+            params: params.iter().copied().collect(),
+            log_weights: Vec::new(),
+            cumulative_weights: Vec::new(),
+            kernels,
+            categorical_marginal,
+        })
+    }
+
+    pub(crate) fn rebuild(
+        &mut self,
         trials: &[TrialId],
         storage: &TrialStorage,
         space: &SearchSpace,
         prior_weight: f64,
         weights: WeightStrategy,
-    ) -> Result<Self, ParzenError> {
+        workspace: &mut ModelBuildWorkspace,
+    ) -> Result<(), ParzenError> {
         let component_count = trials.len() + 1;
-        let mut component_weights: Vec<f64> = (0..trials.len())
-            .map(|index| observation_weight(index, trials.len(), weights))
-            .collect();
-        component_weights.push(prior_weight);
-        let total: f64 = component_weights.iter().sum();
+        workspace.component_weights.clear();
+        workspace.component_weights.extend(
+            (0..trials.len()).map(|index| observation_weight(index, trials.len(), weights)),
+        );
+        workspace.component_weights.push(prior_weight);
+        let total: f64 = workspace.component_weights.iter().sum();
         if !total.is_finite() || total <= 0.0 {
             return Err(ParzenError::InternalModel(
                 "mixture weights are not finite and positive".into(),
             ));
         }
-        for weight in &mut component_weights {
+        for weight in &mut workspace.component_weights {
             *weight /= total;
         }
-        let log_weights: Vec<f64> = component_weights.iter().map(|weight| weight.ln()).collect();
-        let mut cumulative_weights = Vec::with_capacity(component_count);
+        self.log_weights.clear();
+        self.log_weights
+            .extend(workspace.component_weights.iter().map(|weight| weight.ln()));
+        self.cumulative_weights.clear();
         let mut cumulative = 0.0;
-        for weight in component_weights {
+        for weight in workspace.component_weights.iter().copied() {
             cumulative += weight;
-            cumulative_weights.push(cumulative);
+            self.cumulative_weights.push(cumulative);
         }
-        if let Some(last) = cumulative_weights.last_mut() {
+        if let Some(last) = self.cumulative_weights.last_mut() {
             *last = 1.0;
         }
 
-        let mut kernels = Vec::with_capacity(params.len());
-        for param in params {
-            let distribution = space.parameters[param.0 as usize].distribution.clone();
-            let values: Vec<ParamValue> = trials
-                .iter()
-                .map(|trial| {
-                    storage
-                        .typed_value(*trial, *param, &distribution)
-                        .ok_or_else(|| {
-                            ParzenError::InternalModel(
-                                "retained trial is missing an estimator parameter".into(),
-                            )
-                        })
-                })
-                .collect::<Result<_, _>>()?;
-            kernels.push(match distribution {
-                Distribution::Categorical(dist) => {
-                    let observed = values
-                        .into_iter()
-                        .map(|value| {
-                            value.as_categorical().ok_or_else(|| {
-                                ParzenError::InternalModel("categorical value type mismatch".into())
-                            })
-                        })
-                        .collect::<Result<Vec<_>, _>>()?;
+        for (param, kernel) in self.params.iter().zip(&mut self.kernels) {
+            let definition = &space.parameters[param.0 as usize].distribution;
+            workspace.values.clear();
+            for trial in trials {
+                workspace
+                    .values
+                    .push(
+                        storage
+                            .typed_value(*trial, *param, definition)
+                            .ok_or_else(|| {
+                                ParzenError::InternalModel(
+                                    "retained trial is missing an estimator parameter".into(),
+                                )
+                            })?,
+                    );
+            }
+            match (kernel, definition) {
+                (
+                    KernelSet::Categorical {
+                        choices,
+                        observed,
+                        log_hit,
+                        log_miss,
+                    },
+                    Distribution::Categorical(dist),
+                ) => {
+                    observed.clear();
+                    for value in &workspace.values {
+                        observed.push(value.as_categorical().ok_or_else(|| {
+                            ParzenError::InternalModel("categorical value type mismatch".into())
+                        })?);
+                    }
+                    *choices = dist.num_choices();
                     let base = prior_weight / component_count as f64;
                     let denominator = 1.0 + base * f64::from(dist.num_choices());
-                    KernelSet::Categorical {
-                        choices: dist.num_choices(),
-                        observed,
-                        log_hit: ((1.0 + base) / denominator).ln(),
-                        log_miss: (base / denominator).ln(),
-                    }
+                    *log_hit = ((1.0 + base) / denominator).ln();
+                    *log_miss = (base / denominator).ln();
                 }
-                Distribution::Float(dist) => {
-                    KernelSet::Numeric(NumericKernels::float(dist, values)?)
+                (KernelSet::Numeric(kernels), Distribution::Float(_))
+                | (KernelSet::Numeric(kernels), Distribution::Int(_)) => {
+                    kernels.rebuild(&workspace.values, &mut workspace.order)?;
                 }
-                Distribution::Int(dist) => KernelSet::Numeric(NumericKernels::int(dist, values)?),
-            });
+                _ => {
+                    return Err(ParzenError::InternalModel(
+                        "prepared estimator distribution mismatch".into(),
+                    ));
+                }
+            }
         }
-        let categorical_marginal = match kernels.as_slice() {
+        if let (
             [
                 KernelSet::Categorical {
                     choices,
@@ -131,47 +186,42 @@ impl ProductMixture {
                     log_hit,
                     log_miss,
                 },
-            ] => {
-                let mut probabilities = vec![0.0; *choices as usize];
-                for component in 0..component_count {
-                    let component_weight = log_weights[component].exp();
-                    if component == observed.len() {
-                        let probability = component_weight / f64::from(*choices);
-                        for value in &mut probabilities {
-                            *value += probability;
-                        }
-                    } else {
-                        let miss = component_weight * log_miss.exp();
-                        for value in &mut probabilities {
-                            *value += miss;
-                        }
-                        probabilities[observed[component] as usize] +=
-                            component_weight * (log_hit.exp() - log_miss.exp());
+            ],
+            Some(marginal),
+        ) = (self.kernels.as_slice(), &mut self.categorical_marginal)
+        {
+            marginal.log_probabilities.clear();
+            marginal.log_probabilities.resize(*choices as usize, 0.0);
+            for component in 0..component_count {
+                let component_weight = self.log_weights[component].exp();
+                if component == observed.len() {
+                    let probability = component_weight / f64::from(*choices);
+                    for value in &mut marginal.log_probabilities {
+                        *value += probability;
                     }
+                } else {
+                    let miss = component_weight * log_miss.exp();
+                    for value in &mut marginal.log_probabilities {
+                        *value += miss;
+                    }
+                    marginal.log_probabilities[observed[component] as usize] +=
+                        component_weight * (log_hit.exp() - log_miss.exp());
                 }
-                let mut cumulative = Vec::with_capacity(probabilities.len());
-                let mut total = 0.0;
-                for probability in &probabilities {
-                    total += probability;
-                    cumulative.push(total);
-                }
-                if let Some(last) = cumulative.last_mut() {
-                    *last = 1.0;
-                }
-                Some(CategoricalMarginal {
-                    cumulative,
-                    log_probabilities: probabilities.into_iter().map(f64::ln).collect(),
-                })
             }
-            _ => None,
-        };
-        Ok(Self {
-            params: params.iter().copied().collect(),
-            log_weights,
-            cumulative_weights,
-            kernels,
-            categorical_marginal,
-        })
+            marginal.cumulative.clear();
+            let mut total = 0.0;
+            for probability in &marginal.log_probabilities {
+                total += probability;
+                marginal.cumulative.push(total);
+            }
+            if let Some(last) = marginal.cumulative.last_mut() {
+                *last = 1.0;
+            }
+            for probability in &mut marginal.log_probabilities {
+                *probability = probability.ln();
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn sample(
@@ -299,16 +349,7 @@ impl KernelSet {
 }
 
 impl NumericKernels {
-    fn float(dist: FloatDistribution, values: Vec<ParamValue>) -> Result<Self, ParzenError> {
-        let values = values
-            .into_iter()
-            .map(|value| {
-                value
-                    .as_float()
-                    .map(|value| dist.transform(value))
-                    .ok_or_else(|| ParzenError::InternalModel("float value type mismatch".into()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    fn empty_float(dist: FloatDistribution) -> Result<Self, ParzenError> {
         let (low, high, discrete) = if let Some(step) = dist.step() {
             let highest = dist.grid_value(dist.max_step_index().unwrap_or(0));
             (dist.low() - step / 2.0, highest + step / 2.0, true)
@@ -319,19 +360,10 @@ impl NumericKernels {
                 false,
             )
         };
-        Self::build(Distribution::Float(dist), values, low, high, discrete)
+        Self::empty(Distribution::Float(dist), low, high, discrete)
     }
 
-    fn int(dist: IntDistribution, values: Vec<ParamValue>) -> Result<Self, ParzenError> {
-        let values = values
-            .into_iter()
-            .map(|value| {
-                value
-                    .as_int()
-                    .map(|value| dist.transform(value))
-                    .ok_or_else(|| ParzenError::InternalModel("integer value type mismatch".into()))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
+    fn empty_int(dist: IntDistribution) -> Result<Self, ParzenError> {
         let half_step = dist.step() as f64 / 2.0;
         let raw_low = dist.low() as f64 - half_step;
         let raw_high = dist.grid_value(dist.max_step_index()) as f64 + half_step;
@@ -339,12 +371,11 @@ impl NumericKernels {
             crate::IntScale::Linear => (raw_low, raw_high),
             crate::IntScale::Log => (raw_low.ln(), raw_high.ln()),
         };
-        Self::build(Distribution::Int(dist), values, low, high, true)
+        Self::empty(Distribution::Int(dist), low, high, true)
     }
 
-    fn build(
+    fn empty(
         distribution: Distribution,
-        mut means: Vec<f64>,
         adapted_low: f64,
         adapted_high: f64,
         discrete: bool,
@@ -355,57 +386,108 @@ impl NumericKernels {
                 "numeric kernel domain is not finite and positive".into(),
             ));
         }
-        let mut sigmas = vec![range; means.len()];
-        if !means.is_empty() {
-            let mut order: Vec<usize> = (0..means.len()).collect();
-            order.sort_unstable_by(|left, right| means[*left].total_cmp(&means[*right]));
-            let minimum = range / (means.len() + 2).min(100) as f64;
-            for (position, index) in order.iter().copied().enumerate() {
-                let left = if position == 0 {
-                    adapted_low
-                } else {
-                    means[order[position - 1]]
-                };
-                let right = if position + 1 == order.len() {
-                    adapted_high
-                } else {
-                    means[order[position + 1]]
-                };
-                sigmas[index] = (means[index] - left)
-                    .abs()
-                    .max((right - means[index]).abs())
-                    .clamp(minimum, range);
-            }
-        }
-        means.push((adapted_low + adapted_high) * 0.5);
-        sigmas.push(range);
-        let inverse_sigmas: Vec<f64> = sigmas.iter().map(|sigma| sigma.recip()).collect();
-        let log_normalizers = means
-            .iter()
-            .zip(&inverse_sigmas)
-            .map(|(mean, inverse)| {
-                math::log_gaussian_mass(
-                    (adapted_low - mean) * inverse,
-                    (adapted_high - mean) * inverse,
-                )
-            })
-            .collect();
-        let log_coefficients = sigmas
-            .iter()
-            .zip(&log_normalizers)
-            .map(|(sigma, normalizer)| -sigma.ln() - 0.5 * TAU.ln() - normalizer)
-            .collect();
         Ok(Self {
             distribution,
-            means,
-            sigmas,
-            inverse_sigmas,
-            log_normalizers,
-            log_coefficients,
+            means: Vec::new(),
+            sigmas: Vec::new(),
+            inverse_sigmas: Vec::new(),
+            log_normalizers: Vec::new(),
+            log_coefficients: Vec::new(),
             adapted_low,
             adapted_high,
             discrete,
         })
+    }
+
+    fn rebuild(
+        &mut self,
+        values: &[ParamValue],
+        order: &mut Vec<usize>,
+    ) -> Result<(), ParzenError> {
+        self.means.clear();
+        match self.distribution {
+            Distribution::Float(dist) => {
+                for value in values {
+                    self.means.push(
+                        value
+                            .as_float()
+                            .map(|value| dist.transform(value))
+                            .ok_or_else(|| {
+                                ParzenError::InternalModel("float value type mismatch".into())
+                            })?,
+                    );
+                }
+            }
+            Distribution::Int(dist) => {
+                for value in values {
+                    self.means.push(
+                        value
+                            .as_int()
+                            .map(|value| dist.transform(value))
+                            .ok_or_else(|| {
+                                ParzenError::InternalModel("integer value type mismatch".into())
+                            })?,
+                    );
+                }
+            }
+            Distribution::Categorical(_) => {
+                return Err(ParzenError::InternalModel(
+                    "categorical distribution in numeric kernel".into(),
+                ));
+            }
+        }
+        let range = self.adapted_high - self.adapted_low;
+        self.sigmas.clear();
+        self.sigmas.resize(self.means.len(), range);
+        if !self.means.is_empty() {
+            order.clear();
+            order.extend(0..self.means.len());
+            order.sort_unstable_by(|left, right| self.means[*left].total_cmp(&self.means[*right]));
+            let minimum = range / (self.means.len() + 2).min(100) as f64;
+            for (position, index) in order.iter().copied().enumerate() {
+                let left = if position == 0 {
+                    self.adapted_low
+                } else {
+                    self.means[order[position - 1]]
+                };
+                let right = if position + 1 == order.len() {
+                    self.adapted_high
+                } else {
+                    self.means[order[position + 1]]
+                };
+                self.sigmas[index] = (self.means[index] - left)
+                    .abs()
+                    .max((right - self.means[index]).abs())
+                    .clamp(minimum, range);
+            }
+        }
+        self.means
+            .push((self.adapted_low + self.adapted_high) * 0.5);
+        self.sigmas.push(range);
+        self.inverse_sigmas.clear();
+        self.inverse_sigmas
+            .extend(self.sigmas.iter().map(|sigma| sigma.recip()));
+        self.log_normalizers.clear();
+        self.log_normalizers
+            .extend(
+                self.means
+                    .iter()
+                    .zip(&self.inverse_sigmas)
+                    .map(|(mean, inverse)| {
+                        math::log_gaussian_mass(
+                            (self.adapted_low - mean) * inverse,
+                            (self.adapted_high - mean) * inverse,
+                        )
+                    }),
+            );
+        self.log_coefficients.clear();
+        self.log_coefficients.extend(
+            self.sigmas
+                .iter()
+                .zip(&self.log_normalizers)
+                .map(|(sigma, normalizer)| -sigma.ln() - 0.5 * TAU.ln() - normalizer),
+        );
+        Ok(())
     }
 
     fn sample(&self, component: usize, rng: &mut StdRng) -> Result<ParamValue, ParzenError> {

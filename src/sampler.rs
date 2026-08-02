@@ -23,7 +23,7 @@ use smallvec::SmallVec;
 
 use self::{
     history::{BoundedHistory, FullHistory, RankKey},
-    mixture::ProductMixture,
+    mixture::{ModelBuildWorkspace, ProductMixture},
     workspace::AcquisitionWorkspace,
 };
 use crate::{
@@ -182,6 +182,7 @@ struct ModelCache {
     generation: u64,
     good: ProductMixture,
     bad: ProductMixture,
+    workspace: ModelBuildWorkspace,
 }
 
 /// Seeded Tree-structured Parzen Estimator sampler.
@@ -398,30 +399,38 @@ impl TpeSampler {
             }
         };
 
-        let good = ProductMixture::build(
-            params,
+        if !self.caches.contains_key(&key) {
+            self.caches.insert(
+                key,
+                ModelCache {
+                    generation: u64::MAX,
+                    good: ProductMixture::empty(params, space)?,
+                    bad: ProductMixture::empty(params, space)?,
+                    workspace: ModelBuildWorkspace::default(),
+                },
+            );
+        }
+        let cache = self
+            .caches
+            .get_mut(&key)
+            .ok_or_else(|| ParzenError::InternalModel("model cache insertion failed".into()))?;
+        cache.good.rebuild(
             good_trials,
             storage,
             space,
             self.config.prior_weight,
             self.config.weights,
+            &mut cache.workspace,
         )?;
-        let bad = ProductMixture::build(
-            params,
+        cache.bad.rebuild(
             bad_trials,
             storage,
             space,
             self.config.prior_weight,
             self.config.weights,
+            &mut cache.workspace,
         )?;
-        self.caches.insert(
-            key,
-            ModelCache {
-                generation,
-                good,
-                bad,
-            },
-        );
+        cache.generation = generation;
         self.acquire(key)
     }
 
