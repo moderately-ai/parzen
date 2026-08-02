@@ -221,12 +221,20 @@ impl TpeSampler {
                 ));
             }
         }
+        let (max_good, max_bad) = match config.history {
+            HistoryPolicy::Full => (0, 0),
+            HistoryPolicy::Bounded {
+                max_good_trials,
+                max_bad_trials,
+                ..
+            } => (max_good_trials.get(), max_bad_trials.get()),
+        };
         Ok(Self {
             rng: StdRng::seed_from_u64(config.seed),
             config,
             histories: Histories::Uninitialized,
             caches: HashMap::new(),
-            workspace: AcquisitionWorkspace::default(),
+            workspace: AcquisitionWorkspace::new(max_good, max_bad),
         })
     }
 
@@ -333,19 +341,20 @@ impl TpeSampler {
         {
             return self.acquire(key);
         }
-        let (seen, generation, applicable) =
-            self.applicable_history(key, params, space, storage)?;
         let all_categorical = params.iter().all(|param| {
             matches!(
                 space.parameters[param.0 as usize].distribution,
                 Distribution::Categorical(_)
             )
         });
-        let flat = applicable.first().is_some_and(|first| {
-            applicable
-                .iter()
-                .all(|trial| storage.header(*trial).value == storage.header(*first).value)
-        });
+        let (seen, generation, applicable) =
+            self.applicable_history(key, params, space, storage, all_categorical)?;
+        let flat = all_categorical
+            && applicable.first().is_some_and(|first| {
+                applicable
+                    .iter()
+                    .all(|trial| storage.header(*trial).value == storage.header(*first).value)
+            });
         if seen < self.config.startup_trials || seen == 0 || (all_categorical && flat) {
             if all_categorical {
                 return self.sample_unseen_categorical(params, &applicable, space, storage);
@@ -366,15 +375,21 @@ impl TpeSampler {
 
         let good_count = self.good_count(seen)?;
         let (good_trials, bad_trials) = match &self.histories {
-            Histories::Bounded(trackers) => trackers
-                .iter()
-                .find(|tracker| tracker.key == key)
-                .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into()))?
-                .history
-                .split(good_count),
+            Histories::Bounded(trackers) => {
+                let history = &trackers
+                    .iter()
+                    .find(|tracker| tracker.key == key)
+                    .ok_or_else(|| ParzenError::InternalModel("bounded tracker is missing".into()))?
+                    .history;
+                history.split_into(good_count, &mut self.workspace.history);
+                (
+                    self.workspace.history.good_trials.as_slice(),
+                    self.workspace.history.bad_trials.as_slice(),
+                )
+            }
             Histories::Full(_) => {
                 let count = good_count.min(applicable.len().saturating_sub(1)).max(1);
-                (applicable[..count].to_vec(), applicable[count..].to_vec())
+                (&applicable[..count], &applicable[count..])
             }
             Histories::Uninitialized => {
                 return Err(ParzenError::InternalModel(
@@ -385,7 +400,7 @@ impl TpeSampler {
 
         let good = ProductMixture::build(
             params,
-            &good_trials,
+            good_trials,
             storage,
             space,
             self.config.prior_weight,
@@ -393,7 +408,7 @@ impl TpeSampler {
         )?;
         let bad = ProductMixture::build(
             params,
-            &bad_trials,
+            bad_trials,
             storage,
             space,
             self.config.prior_weight,
@@ -458,6 +473,7 @@ impl TpeSampler {
         params: &[ParamId],
         space: &SearchSpace,
         storage: &TrialStorage,
+        materialize_bounded: bool,
     ) -> Result<(usize, u64, Vec<TrialId>), ParzenError> {
         match &self.histories {
             Histories::Bounded(trackers) => {
@@ -467,14 +483,17 @@ impl TpeSampler {
                     .ok_or_else(|| {
                         ParzenError::InternalModel("bounded tracker is missing".into())
                     })?;
-                let (good, bad) = tracker.history.split(tracker.history.seen().min(1));
-                let mut retained = good;
-                retained.extend(bad);
-                Ok((
-                    tracker.history.seen(),
-                    tracker.history.generation(),
-                    retained,
-                ))
+                let retained = if materialize_bounded {
+                    tracker.history.retained_trials().collect()
+                } else {
+                    Vec::new()
+                };
+                let seen = if tracker.history.is_empty() {
+                    0
+                } else {
+                    tracker.history.seen()
+                };
+                Ok((seen, tracker.history.generation(), retained))
             }
             Histories::Full(history) => {
                 let applicable: Vec<TrialId> = history

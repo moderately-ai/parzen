@@ -83,6 +83,22 @@ pub(crate) struct BoundedHistory {
     reservoir: BinaryHeap<ReservoirEntry>,
 }
 
+pub(crate) struct HistoryWorkspace {
+    pub good_trials: Vec<TrialId>,
+    bad_ranks: Vec<RankKey>,
+    pub bad_trials: Vec<TrialId>,
+}
+
+impl HistoryWorkspace {
+    pub(crate) fn new(max_good: usize, max_bad: usize) -> Self {
+        Self {
+            good_trials: Vec::with_capacity(max_good),
+            bad_ranks: Vec::with_capacity(max_bad.saturating_add(1)),
+            bad_trials: Vec::with_capacity(max_bad),
+        }
+    }
+}
+
 impl BoundedHistory {
     pub(crate) fn new(max_good: usize, max_bad: usize, recent: usize, seed: u64) -> Self {
         Self {
@@ -148,19 +164,28 @@ impl BoundedHistory {
         }
     }
 
-    pub(crate) fn split(&self, good_count: usize) -> (Vec<TrialId>, Vec<TrialId>) {
+    pub(crate) fn split_into(&self, good_count: usize, workspace: &mut HistoryWorkspace) {
         let good_count = good_count.min(self.top.len());
-        let good = self.top[..good_count]
-            .iter()
-            .map(|rank| rank.trial)
-            .collect();
-        let mut bad_ranks: Vec<RankKey> = self.top[good_count..].to_vec();
-        bad_ranks.extend(self.recent.iter().copied());
-        bad_ranks.extend(self.reservoir.iter().map(|entry| entry.rank));
-        bad_ranks.sort_unstable();
-        bad_ranks.truncate(self.max_bad);
-        let bad = bad_ranks.into_iter().map(|rank| rank.trial).collect();
-        (good, bad)
+        workspace.good_trials.clear();
+        workspace
+            .good_trials
+            .extend(self.top[..good_count].iter().map(|rank| rank.trial));
+
+        workspace.bad_ranks.clear();
+        workspace
+            .bad_ranks
+            .extend_from_slice(&self.top[good_count..]);
+        workspace.bad_ranks.extend(self.recent.iter().copied());
+        workspace
+            .bad_ranks
+            .extend(self.reservoir.iter().map(|entry| entry.rank));
+        workspace.bad_ranks.sort_unstable();
+        workspace.bad_ranks.truncate(self.max_bad);
+
+        workspace.bad_trials.clear();
+        workspace
+            .bad_trials
+            .extend(workspace.bad_ranks.iter().map(|rank| rank.trial));
     }
 
     pub(crate) const fn seen(&self) -> usize {
@@ -171,6 +196,16 @@ impl BoundedHistory {
     }
     pub(crate) fn retained(&self) -> usize {
         self.top.len() + self.recent.len() + self.reservoir.len()
+    }
+    pub(crate) fn is_empty(&self) -> bool {
+        self.seen == 0
+    }
+    pub(crate) fn retained_trials(&self) -> impl Iterator<Item = TrialId> + '_ {
+        self.top
+            .iter()
+            .map(|rank| rank.trial)
+            .chain(self.recent.iter().map(|rank| rank.trial))
+            .chain(self.reservoir.iter().map(|entry| entry.rank.trial))
     }
 }
 
@@ -207,16 +242,72 @@ pub(crate) fn stable_key(seed: u64, value: u64) -> u64 {
 mod tests {
     use super::*;
 
+    fn reference_split(
+        history: &BoundedHistory,
+        good_count: usize,
+    ) -> (Vec<TrialId>, Vec<TrialId>) {
+        let good_count = good_count.min(history.top.len());
+        let good = history.top[..good_count]
+            .iter()
+            .map(|rank| rank.trial)
+            .collect();
+        let mut bad_ranks: Vec<RankKey> = history.top[good_count..].to_vec();
+        bad_ranks.extend(history.recent.iter().copied());
+        bad_ranks.extend(history.reservoir.iter().map(|entry| entry.rank));
+        bad_ranks.sort_unstable();
+        bad_ranks.truncate(history.max_bad);
+        let bad = bad_ranks.into_iter().map(|rank| rank.trial).collect();
+        (good, bad)
+    }
+
     #[test]
     fn bounded_history_retains_exact_top_and_constant_capacity() {
         let mut history = BoundedHistory::new(3, 8, 2, 9);
         for id in 0..1_000_000 {
             history.insert(RankKey::new(TrialId(id), id as f64, Direction::Minimize, 9));
         }
-        let (good, bad) = history.split(2);
-        assert_eq!(good, vec![TrialId(0), TrialId(1)]);
-        assert!(bad.len() <= 8);
+        let mut workspace = HistoryWorkspace::new(3, 8);
+        history.split_into(2, &mut workspace);
+        assert_eq!(workspace.good_trials, vec![TrialId(0), TrialId(1)]);
+        assert!(workspace.bad_trials.len() <= 8);
         assert!(history.retained() <= 11);
+    }
+
+    #[test]
+    fn reusable_split_matches_allocating_reference() {
+        let mut history = BoundedHistory::new(25, 512, 64, 23);
+        let mut workspace = HistoryWorkspace::new(25, 512);
+        for id in 0..10_000 {
+            let objective = ((id * 7919) % 1009) as f64;
+            history.insert(RankKey::new(
+                TrialId(id),
+                objective,
+                Direction::Minimize,
+                23,
+            ));
+            if matches!(id, 0 | 1 | 9 | 99 | 999 | 9_999) {
+                for good_count in [0, 1, 5, 25, 50] {
+                    let expected = reference_split(&history, good_count);
+                    history.split_into(good_count, &mut workspace);
+                    assert_eq!(workspace.good_trials, expected.0);
+                    assert_eq!(workspace.bad_trials, expected.1);
+                    assert!(workspace.good_trials.capacity() <= 25);
+                    assert!(workspace.bad_ranks.capacity() <= 513);
+                    assert!(workspace.bad_trials.capacity() <= 512);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn retained_trial_iterator_visits_each_retained_trial_once() {
+        let mut history = BoundedHistory::new(3, 8, 2, 9);
+        assert!(history.is_empty());
+        for id in 0..100 {
+            history.insert(RankKey::new(TrialId(id), id as f64, Direction::Minimize, 9));
+        }
+        let retained: BTreeSet<_> = history.retained_trials().collect();
+        assert_eq!(retained.len(), history.retained());
     }
 
     #[test]
