@@ -31,11 +31,13 @@ comparison-benchmarks/target/release/compare characterize \
 ```
 
 Available suites are `smoke`, `characterize`, `timing`, `scaling`, `quality`,
-`memory`, and `full`. Use `--backend all|parzen|parzen/full|parzen/bounded|tpe|hyperopt|optimizer`,
+`memory`, and `full`. Use `--backend all|NAME[,NAME...]`, where a name is
+`parzen`, `parzen/full`, `parzen/bounded`, `tpe`, `hyperopt`, or `optimizer`,
 `--rounds N`, `--samples N`, `--warmup N`, `--calibration-ms N`,
 `--timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
-`--output PATH`. Use `--scenario NAME`, `--operation NAME`, and `--history N`
-to run a focused subset without changing the suite definitions. The driver
+`--output PATH`. Use `--scenario NAME`, `--operation NAME`, `--history N`, and
+`--dimensions N` to run a focused subset without changing the suite
+definitions. The driver
 prints the case count, backend invocation count,
 calibrated sampling-time floor, quality evaluation count, and memory observation
 count before starting. Characterization limits each child to 10 seconds;
