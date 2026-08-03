@@ -13,6 +13,8 @@ The default `parzen-simd` feature benchmarks Parzen's `pulp` runtime backend.
 Build with `--no-default-features` for the scalar control. SIMD remains behind
 Parzen's crate-private numeric boundary so a future stable `std::simd` backend
 can replace `pulp` without changing Parzen's public API or benchmark semantics.
+Result tables include the exact numeric backend in Parzen row labels so scalar,
+SIMD, and policy-fallback records cannot be silently aggregated.
 
 ## Build and smoke test
 

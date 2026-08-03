@@ -163,6 +163,33 @@ fn markdown_generation_is_deterministic_for_fixed_records() {
 }
 
 #[test]
+fn report_distinguishes_scalar_and_simd_parzen_records() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Cycle,
+            history: 10,
+            dimensions: 1,
+            iterations: 1,
+            samples: 1,
+            warmup: 0,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+    };
+    let mut scalar = execute::<ParzenBackend>(&cli).expect("scalar record");
+    scalar.numeric_backend = Some("scalar-f64".to_owned());
+    let mut simd = scalar.clone();
+    simd.numeric_backend = Some("pulp-avx2-fma".to_owned());
+
+    let mut markdown = Vec::new();
+    write_markdown(&[scalar, simd], &mut markdown).expect("report");
+    let markdown = String::from_utf8(markdown).expect("utf8");
+    assert!(markdown.contains("parzen/full (scalar-f64)"));
+    assert!(markdown.contains("parzen/full (pulp-avx2-fma)"));
+}
+
+#[test]
 fn fixed_suggest_profile_keeps_history_constant() {
     let cli = BackendCli {
         config: RunConfig {
@@ -223,14 +250,20 @@ fn profile_report_identifies_the_workload() {
         },
         format: OutputFormat::Json,
     };
-    let mut competitor = execute::<ParzenBackend>(&cli).expect("parzen profile");
+    let parzen = execute::<ParzenBackend>(&cli).expect("profile");
+    let numeric_backend = parzen
+        .numeric_backend
+        .clone()
+        .expect("Parzen numeric backend");
+    let mut competitor = parzen.clone();
     competitor.backend = "comparison-probe".to_owned();
-    let records = [execute::<ParzenBackend>(&cli).expect("profile"), competitor];
+    let records = [parzen, competitor];
     let mut markdown = Vec::new();
     write_markdown(&records, &mut markdown).expect("report");
     let markdown = String::from_utf8(markdown).expect("utf8");
     assert!(markdown.contains("Profile workload: `fixed-suggest`"));
     assert!(markdown.contains("Start observations"));
+    assert!(markdown.contains(&format!("parzen/full ({numeric_backend})")));
 }
 
 #[test]

@@ -4,7 +4,9 @@
 
 - Raise the minimum supported Rust version from 1.88 to 1.89.
 - Add optional, default-enabled runtime-dispatched SIMD for continuous TPE acquisition while
-  retaining an exact scalar fallback and an implementation-independent public API.
+  retaining an exact scalar fallback and an implementation-independent public API. The runtime
+  policy enables SIMD only for the independently modeled, at-least-four-dimensional continuous
+  envelope where measurements cleared the performance gate.
 
 ## [0.2.0] - 2026-07-31
 

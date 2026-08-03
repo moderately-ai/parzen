@@ -75,10 +75,12 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
         let parzen_supported = group.iter().any(|record| {
             record.backend == "parzen" && record.supported && record.execution_error.is_none()
         });
-        let competitor_supported = group.iter().any(|record| {
-            record.backend != "parzen" && record.supported && record.execution_error.is_none()
-        });
-        if !parzen_supported || !competitor_supported {
+        let supported_labels = group
+            .iter()
+            .filter(|record| record.supported && record.execution_error.is_none())
+            .map(|record| backend_label(record))
+            .collect::<std::collections::BTreeSet<_>>();
+        if !parzen_supported || supported_labels.len() < 2 {
             continue;
         }
         writeln!(output)?;
@@ -149,13 +151,16 @@ fn records_by_backend<'a>(
 
 fn backend_label(record: &BenchmarkRecord) -> String {
     if record.backend == "parzen" {
-        match record.config.parzen_history {
-            ParzenHistory::Full => "parzen/full".into(),
-            ParzenHistory::Bounded => "parzen/bounded".into(),
-        }
-    } else {
-        record.backend.clone()
+        let history = match record.config.parzen_history {
+            ParzenHistory::Full => "full",
+            ParzenHistory::Bounded => "bounded",
+        };
+        return record.numeric_backend.as_ref().map_or_else(
+            || format!("parzen/{history}"),
+            |backend| format!("parzen/{history} ({backend})"),
+        );
     }
+    record.backend.clone()
 }
 
 fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> HarnessResult<()> {

@@ -79,6 +79,10 @@ crate version, and target architecture. Serde support and runtime-dispatched SIM
 default. The `simd` feature uses `pulp` internally for stable-Rust f64 kernels with a portable scalar
 fallback; no SIMD types appear in Parzen's public API. Disable either feature independently with
 `default-features = false` and an explicit feature list.
+The measured runtime policy currently vectorizes acquisition only when a search space contains at
+least four independent continuous estimators. One-dimensional, grouped, categorical, discrete,
+and mixed estimators use the scalar kernel because SIMD did not meet the project's non-regression
+gate for those shapes.
 
 See [MIGRATING-0.1-TO-0.2.md](MIGRATING-0.1-TO-0.2.md) for the v0.1 migration guide.
 
