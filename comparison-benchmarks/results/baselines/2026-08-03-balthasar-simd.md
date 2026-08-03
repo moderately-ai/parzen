@@ -6,18 +6,18 @@ Benchmark protocol(s): checkpoint, curated, quick.
 
 ## categorical / cycle
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 27424.8 | 27823.2 | 28435.0 | 36463.3 | 0/8 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 27403.4 | 27820.2 | 28542.4 | 36491.8 | 0/8 |
-| parzen/full (scalar-f64) | supported | 27038.1 | 27440.0 | 28139.8 | 36984.8 | 0/8 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 26210.2 | 26656.9 | 28274.4 | 38153.1 | 8/8 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 27677.1 | 28357.3 | 29618.3 | 36131.0 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 27524.1 | 27961.3 | 29802.7 | 36331.8 | 0/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 27333.5 | 27605.7 | 28211.7 | 36585.2 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 26412.8 | 26683.7 | 28466.5 | 37860.4 | 4/4 |
 
 ## categorical / quality
 
-History: 1000; dimensions: 1; budget: 25.
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -28,7 +28,7 @@ History: 1000; dimensions: 1; budget: 25.
 
 ## categorical / quality
 
-History: 1000; dimensions: 1; budget: 50.
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -39,7 +39,7 @@ History: 1000; dimensions: 1; budget: 50.
 
 ## categorical / quality
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -50,7 +50,7 @@ History: 1000; dimensions: 1; budget: 100.
 
 ## categorical / quality
 
-History: 1000; dimensions: 1; budget: 250.
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -61,29 +61,29 @@ History: 1000; dimensions: 1; budget: 250.
 
 ## categorical / suggest
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 484.4 | 491.4 | 499.9 | 2064285.7 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 469.3 | 472.7 | 478.2 | 2130874.7 | 3/4 |
-| parzen/full (scalar-f64) | supported | 481.3 | 486.8 | 507.4 | 2077893.5 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 472.0 | 474.9 | 521.9 | 2118641.0 | 1/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 209820 | 3/4 | 484.2 | 488.1 | 495.0 | 2065148.0 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 262144 | 3/4 | 472.1 | 475.3 | 479.2 | 2118036.6 | 2/4 |
+| parzen/full (scalar-f64) | supported | 262144 | 3/4 | 484.7 | 487.8 | 501.2 | 2063023.2 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 210045 | 3/4 | 471.7 | 475.2 | 497.4 | 2120029.4 | 2/4 |
 
 ## conditional / cycle
 
-History: 1000; dimensions: 2; budget: 100.
+History: 1000; dimensions: 2; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 177166.7 | 178749.6 | 180027.5 | 5644.4 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 176451.1 | 179189.3 | 181259.3 | 5667.3 | 0/4 |
-| parzen/full (scalar-f64) | supported | 25137.3 | 25448.0 | 26130.5 | 39781.6 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 24377.2 | 24599.7 | 25044.4 | 41022.0 | 4/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 177675.3 | 179912.4 | 181994.0 | 5628.2 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 180546.6 | 182179.8 | 184073.7 | 5538.7 | 0/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 25560.8 | 25990.6 | 26649.2 | 39122.4 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 23957.8 | 24188.0 | 25433.8 | 41740.1 | 4/4 |
 
 ## conditional / quality
 
-History: 1000; dimensions: 2; budget: 25.
+History: 1000; dimensions: 2; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -94,7 +94,7 @@ History: 1000; dimensions: 2; budget: 25.
 
 ## conditional / quality
 
-History: 1000; dimensions: 2; budget: 50.
+History: 1000; dimensions: 2; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -105,7 +105,7 @@ History: 1000; dimensions: 2; budget: 50.
 
 ## conditional / quality
 
-History: 1000; dimensions: 2; budget: 100.
+History: 1000; dimensions: 2; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -116,7 +116,7 @@ History: 1000; dimensions: 2; budget: 100.
 
 ## conditional / quality
 
-History: 1000; dimensions: 2; budget: 250.
+History: 1000; dimensions: 2; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -127,30 +127,39 @@ History: 1000; dimensions: 2; budget: 250.
 
 ## conditional / suggest
 
-History: 1000; dimensions: 2; budget: 100.
+History: 1000; dimensions: 2; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 87198.9 | 87594.8 | 88255.9 | 11468.0 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 86676.8 | 87012.6 | 91169.7 | 11537.1 | 0/4 |
-| parzen/full (scalar-f64) | supported | 388.7 | 391.1 | 394.0 | 2572618.5 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 377.1 | 380.1 | 384.8 | 2651505.7 | 4/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 1629 | 3/4 | 87297.4 | 87730.1 | 88184.3 | 11455.1 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 1596 | 3/4 | 86976.7 | 88183.4 | 90412.7 | 11497.3 | 0/4 |
+| parzen/full (scalar-f64) | supported | 262144 | 3/4 | 389.5 | 391.6 | 397.1 | 2567418.7 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 262144 | 3/4 | 373.3 | 375.9 | 450.3 | 2678877.6 | 4/4 |
 
 ## correlated-numeric / cycle
 
-History: 1000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 602518.4 | 607131.4 | 617763.9 | 1659.7 | 0/4 |
-| parzen/bounded (scalar-f64) | supported | 394546.9 | 398877.2 | 400561.8 | 2534.6 | 4/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 397732.1 | 400711.5 | 405535.2 | 2514.3 | 0/4 |
-| parzen/full (scalar-f64) | supported | 761213.6 | 765342.2 | 771537.5 | 1313.7 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 764163.2 | 770297.0 | 775381.7 | 1308.6 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 402005.8 | 404773.6 | 408977.9 | 2487.5 | 2/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 400410.7 | 405161.1 | 408649.9 | 2497.4 | 2/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 745871.9 | 752941.1 | 756199.6 | 1340.7 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 749779.8 | 756727.0 | 758756.0 | 1333.7 | 0/4 |
+
+## correlated-numeric / cycle
+
+History: 1000; dimensions: 8; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 50 | 3/4 | 944714.5 | 949092.0 | 957814.0 | 1058.5 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 637323.7 | 642194.0 | 646160.7 | 1569.1 | 4/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 1170989.3 | 1179455.9 | 1189071.7 | 854.0 | 0/4 |
 
 ## correlated-numeric / quality
 
-History: 1000; dimensions: 4; budget: 25.
+History: 1000; dimensions: 4; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -161,7 +170,7 @@ History: 1000; dimensions: 4; budget: 25.
 
 ## correlated-numeric / quality
 
-History: 1000; dimensions: 4; budget: 50.
+History: 1000; dimensions: 4; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -172,7 +181,7 @@ History: 1000; dimensions: 4; budget: 50.
 
 ## correlated-numeric / quality
 
-History: 1000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -183,7 +192,7 @@ History: 1000; dimensions: 4; budget: 100.
 
 ## correlated-numeric / quality
 
-History: 1000; dimensions: 4; budget: 250.
+History: 1000; dimensions: 4; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -194,143 +203,156 @@ History: 1000; dimensions: 4; budget: 250.
 
 ## correlated-numeric / suggest
 
-History: 1000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 564313.6 | 568597.3 | 571614.1 | 1772.1 | 0/4 |
-| parzen/bounded (scalar-f64) | supported | 180217.4 | 181390.0 | 183305.0 | 5548.9 | 4/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 182029.1 | 183264.7 | 185277.6 | 5493.6 | 0/4 |
-| parzen/full (scalar-f64) | supported | 353480.7 | 355875.9 | 357974.1 | 2829.0 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 358156.3 | 359955.6 | 362170.9 | 2792.1 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 738 | 3/4 | 179434.1 | 181438.2 | 182265.7 | 5573.1 | 4/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 738 | 3/4 | 181831.6 | 182933.9 | 183817.1 | 5499.6 | 0/4 |
+| parzen/full (scalar-f64) | supported | 369 | 3/4 | 352106.0 | 355561.6 | 357440.4 | 2840.1 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 366 | 3/4 | 359067.6 | 360790.5 | 362831.4 | 2785.0 | 0/4 |
 
-## independent-float / cycle
+## correlated-numeric / suggest
 
-History: 10; dimensions: 4; budget: 100.
+History: 1000; dimensions: 8; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 61411.1 | 62457.6 | 63897.4 | 16283.7 | 1/4 |
-| parzen/bounded (scalar-f64) | supported | 71478.5 | 72191.0 | 74630.9 | 13990.2 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 57083.3 | 57919.6 | 76127.2 | 17518.3 | 3/4 |
-| parzen/full (scalar-f64) | supported | 66517.8 | 67561.4 | 68028.7 | 15033.6 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 214 | 3/4 | 917563.7 | 921302.9 | 935344.0 | 1089.8 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 620 | 3/4 | 199225.3 | 200513.1 | 212375.7 | 5019.4 | 4/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 316 | 3/4 | 392117.9 | 395386.7 | 403371.2 | 2550.3 | 0/4 |
 
 ## independent-float / cycle
 
-History: 100; dimensions: 4; budget: 100.
+History: 10; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 172445.0 | 174071.8 | 176523.4 | 5798.9 | 0/4 |
-| parzen/bounded (scalar-f64) | supported | 195417.6 | 197433.7 | 198933.1 | 5117.2 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 156313.0 | 157944.0 | 160383.9 | 6397.4 | 4/4 |
-| parzen/full (scalar-f64) | supported | 180446.3 | 182067.6 | 184536.8 | 5541.8 | 0/4 |
-
-## independent-float / cycle
-
-History: 1000; dimensions: 1; budget: 100.
-
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 152502.2 | 154817.6 | 155627.6 | 6557.3 | 2/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 153137.5 | 154545.2 | 156083.1 | 6530.1 | 2/4 |
-| parzen/full (scalar-f64) | supported | 283744.5 | 285967.3 | 287917.7 | 3524.3 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 283657.8 | 286198.1 | 289823.8 | 3525.4 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 3/4 | 39757.0 | 40598.4 | 41877.2 | 25152.8 | 0/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 44951.1 | 45621.5 | 47299.5 | 22246.4 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 50 | 3/4 | 37854.9 | 38461.1 | 40124.0 | 26416.6 | 4/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 42979.2 | 44037.9 | 45161.1 | 23267.0 | 0/4 |
 
 ## independent-float / cycle
 
-History: 1000; dimensions: 4; budget: 100.
+History: 100; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| hyperopt | supported | 1700384.8 | 1712929.6 | 1756903.1 | 588.1 | 0/4 |
-| optimizer | supported | 712181.9 | 723036.3 | 726589.6 | 1404.1 | 1/4 |
-| parzen/bounded (pulp-avx2-fma) | supported | 717537.2 | 720889.3 | 737762.8 | 1393.7 | 3/4 |
-| parzen/bounded (scalar-f64) | supported | 778832.8 | 785197.6 | 790369.2 | 1284.0 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 1359965.6 | 1367311.3 | 1388620.7 | 735.3 | 0/4 |
-| parzen/full (scalar-f64) | supported | 1483768.7 | 1492385.6 | 1527943.2 | 674.0 | 0/4 |
-| tpe | supported | 892223.4 | 899804.9 | 905817.0 | 1120.8 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 3/4 | 151476.3 | 153784.1 | 156652.6 | 6601.7 | 0/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 171663.8 | 173891.6 | 175804.3 | 5825.3 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 50 | 3/4 | 137922.7 | 139777.2 | 142959.5 | 7250.4 | 4/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 159765.1 | 161158.3 | 163510.8 | 6259.2 | 0/4 |
 
 ## independent-float / cycle
 
-History: 1000; dimensions: 8; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 1468735.1 | 1481497.1 | 1483930.4 | 680.9 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 1582446.0 | 1592745.5 | 1601515.0 | 631.9 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 2856833.1 | 2876603.6 | 2909556.8 | 350.0 | 0/4 |
-| parzen/full (scalar-f64) | supported | 3113091.6 | 3135955.5 | 3154660.9 | 321.2 | 0/4 |
-
-## independent-float / cycle
-
-History: 1000; dimensions: 16; budget: 100.
-
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 3104607.9 | 3119760.0 | 3136278.5 | 322.1 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 3297414.1 | 3321496.1 | 3331859.2 | 303.3 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 5853366.2 | 5906979.3 | 5940582.4 | 170.8 | 0/4 |
-| parzen/full (scalar-f64) | supported | 6312011.8 | 6367173.0 | 6407954.0 | 158.4 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 154016.1 | 155978.4 | 157815.4 | 6492.8 | 4/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 156611.0 | 157396.4 | 159677.5 | 6385.2 | 0/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 280625.6 | 285631.5 | 288226.2 | 3563.5 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 283069.3 | 285467.3 | 288568.4 | 3532.7 | 0/4 |
 
 ## independent-float / cycle
 
-History: 10000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 6925568.1 | 6989883.6 | 7047300.1 | 144.4 | 0/8 |
-| parzen/bounded (pulp-avx2-fma) | supported | 708023.7 | 724012.2 | 730283.1 | 1412.4 | 8/8 |
-| parzen/bounded (scalar-f64) | supported | 773690.1 | 782683.1 | 791301.1 | 1292.5 | 0/8 |
-| parzen/full (pulp-avx2-fma) | supported | 14364002.4 | 14794326.4 | 15094789.2 | 69.6 | 0/8 |
-| parzen/full (scalar-f64) | supported | 16264294.3 | 16374342.3 | 16442540.8 | 61.5 | 0/8 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| hyperopt | supported | 50 | 3/4 | 1704403.4 | 1718259.9 | 1731038.0 | 586.7 | 0/4 |
+| optimizer | supported | 50 | 3/4 | 703672.1 | 711551.9 | 715835.6 | 1421.1 | 4/4 |
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 6/8 | 729191.7 | 739809.4 | 745361.1 | 1371.4 | 0/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 793869.7 | 799908.4 | 803618.5 | 1259.7 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 50 | 6/8 | 1361282.8 | 1393214.2 | 1403079.7 | 734.6 | 0/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 1517749.0 | 1525471.4 | 1537644.3 | 658.9 | 0/4 |
+| tpe | supported | 50 | 3/4 | 865690.8 | 877231.7 | 887537.8 | 1155.1 | 0/4 |
 
 ## independent-float / cycle
 
-History: 100000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 8; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 708507.9 | 714479.9 | 718425.9 | 1411.4 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 772710.9 | 777659.9 | 786283.6 | 1294.1 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 160298472.0 | 161338864.0 | 162156921.0 | 6.2 | 0/4 |
-| parzen/full (scalar-f64) | supported | 175398583.0 | 177818291.0 | 179620379.0 | 5.7 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 3/4 | 1495990.7 | 1513024.1 | 1529590.7 | 668.5 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 1611023.5 | 1622628.0 | 1631269.4 | 620.7 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 50 | 3/4 | 2851044.0 | 2873190.0 | 3999952.7 | 350.7 | 0/4 |
+| parzen/full (scalar-f64) | supported | 32 | 3/4 | 3125492.8 | 3142077.2 | 3153976.2 | 319.9 | 0/4 |
+
+## independent-float / cycle
+
+History: 1000; dimensions: 16; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 3/4 | 3053437.1 | 3136460.4 | 3171390.2 | 327.5 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 3313465.4 | 3328082.2 | 3340532.1 | 301.8 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 17 | 3/4 | 5856818.7 | 5893028.4 | 5938385.9 | 170.7 | 0/4 |
+| parzen/full (scalar-f64) | supported | 16 | 3/4 | 6326363.6 | 6367513.3 | 6410238.1 | 158.1 | 0/4 |
+
+## independent-float / cycle
+
+History: 10000; dimensions: 4; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 70 | 7/8 | 6941368.2 | 7025503.5 | 7077003.5 | 144.1 | 0/8 |
+| parzen/bounded (pulp-avx2-fma) | supported | 100 | 7/8 | 705863.6 | 725326.8 | 734255.6 | 1416.7 | 8/8 |
+| parzen/bounded (scalar-f64) | supported | 100 | 7/8 | 774447.5 | 782644.9 | 789247.2 | 1291.2 | 0/8 |
+| parzen/full (pulp-avx2-fma) | supported | 17 | 7/8 | 14754985.7 | 14877536.4 | 14958213.0 | 67.8 | 0/8 |
+| parzen/full (scalar-f64) | supported | 30 | 7/8 | 16287861.5 | 16382199.4 | 16447859.7 | 61.4 | 0/8 |
+
+## independent-float / cycle
+
+History: 100000; dimensions: 4; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 50 | 3/4 | 717225.8 | 724275.8 | 726858.5 | 1394.3 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 772259.1 | 780648.9 | 790912.0 | 1294.9 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 1 | 3/4 | 160916098.0 | 162158398.0 | 164142406.0 | 6.2 | 0/4 |
+| parzen/full (scalar-f64) | supported | 1 | 3/4 | 175963831.0 | 177201591.0 | 178996755.0 | 5.7 | 0/4 |
 
 ## independent-float / memory
 
-History: 1000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Retained after ingest | Retained at cycle end | Cycle bytes/op | Peak live bytes | Peak RSS bytes |
 |---|---|---:|---:|---:|---:|---:|
 | optimizer | supported | 1247168 | 1616144 | 147658.7 | 1633762 | 6160384 |
-| parzen/bounded (pulp-avx2-fma) | supported | 205264 | 463464 | 1546.6 | 463530 | 4325376 |
-| parzen/full (pulp-avx2-fma) | supported | 197928 | 856600 | 121411.4 | 873050 | 4718592 |
+| parzen/bounded (pulp-avx2-fma) | supported | 205264 | 463464 | 1546.6 | 463530 | 4587520 |
+| parzen/full (pulp-avx2-fma) | supported | 197928 | 856600 | 121411.4 | 873050 | 4587520 |
 
 ## independent-float / profile
 
 Profile workload: `cycle`.
 
-History: 10000; dimensions: 4; budget: 100.
+History: 10000; dimensions: 4; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Workload | Operations | Start observations | End observations | Profile seconds |
 |---|---|---|---:|---:|---:|---:|
-| parzen/full (pulp-avx2-fma) | supported | cycle | 2052 | 10000 | 12052 | 30.013 |
-| parzen/full (scalar-f64) | supported | cycle | 1837 | 10000 | 11837 | 30.002 |
+| parzen/bounded (pulp-avx2-fma) | supported | cycle | 57227 | 10000 | 67227 | 30.000 |
+| parzen/bounded (scalar-f64) | supported | cycle | 50053 | 10000 | 60053 | 30.000 |
+| parzen/full (pulp-avx2-fma) | supported | cycle | 2006 | 10000 | 12006 | 30.008 |
+| parzen/full (scalar-f64) | supported | cycle | 1830 | 10000 | 11830 | 30.001 |
 
 ## independent-float / profile
 
 Profile workload: `fixed-suggest`.
 
-History: 10000; dimensions: 4; budget: 100.
+History: 10000; dimensions: 4; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Workload | Operations | Start observations | End observations | Profile seconds |
 |---|---|---|---:|---:|---:|---:|
-| parzen/full (pulp-avx2-fma) | supported | fixed-suggest | 2739 | 10000 | 10000 | 30.009 |
-| parzen/full (scalar-f64) | supported | fixed-suggest | 2401 | 10000 | 10000 | 30.001 |
+| parzen/bounded (pulp-avx2-fma) | supported | fixed-suggest | 61826 | 10000 | 10000 | 30.000 |
+| parzen/bounded (scalar-f64) | supported | fixed-suggest | 55968 | 10000 | 10000 | 30.000 |
+| parzen/full (pulp-avx2-fma) | supported | fixed-suggest | 2690 | 10000 | 10000 | 30.006 |
+| parzen/full (scalar-f64) | supported | fixed-suggest | 2363 | 10000 | 10000 | 30.008 |
 
 ## independent-float / quality
 
-History: 1000; dimensions: 4; budget: 25.
+History: 1000; dimensions: 4; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -341,7 +363,7 @@ History: 1000; dimensions: 4; budget: 25.
 
 ## independent-float / quality
 
-History: 1000; dimensions: 4; budget: 50.
+History: 1000; dimensions: 4; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -352,7 +374,7 @@ History: 1000; dimensions: 4; budget: 50.
 
 ## independent-float / quality
 
-History: 1000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -363,7 +385,7 @@ History: 1000; dimensions: 4; budget: 100.
 
 ## independent-float / quality
 
-History: 1000; dimensions: 4; budget: 250.
+History: 1000; dimensions: 4; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -374,121 +396,201 @@ History: 1000; dimensions: 4; budget: 250.
 
 ## independent-float / suggest
 
-History: 10; dimensions: 4; budget: 100.
+History: 10; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 14238.3 | 14310.7 | 14521.3 | 70233.3 | 3/4 |
-| parzen/bounded (scalar-f64) | supported | 15278.6 | 15340.0 | 15654.0 | 65451.1 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 14239.6 | 14451.9 | 15453.3 | 70226.6 | 1/4 |
-| parzen/full (scalar-f64) | supported | 15243.4 | 15345.4 | 16495.7 | 65602.0 | 0/4 |
-
-## independent-float / suggest
-
-History: 100; dimensions: 4; budget: 100.
-
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 75504.8 | 76109.0 | 77915.8 | 13244.2 | 3/4 |
-| parzen/bounded (scalar-f64) | supported | 83520.5 | 85210.5 | 85840.0 | 11973.1 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 75670.3 | 76383.9 | 77485.3 | 13215.2 | 1/4 |
-| parzen/full (scalar-f64) | supported | 82784.1 | 84038.9 | 85067.7 | 12079.6 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 9264 | 3/4 | 14375.6 | 14457.6 | 14767.0 | 69562.2 | 1/4 |
+| parzen/bounded (scalar-f64) | supported | 8544 | 3/4 | 15291.8 | 15390.7 | 15508.3 | 65394.5 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 8846 | 3/4 | 14386.6 | 14592.2 | 14706.8 | 69509.2 | 3/4 |
+| parzen/full (scalar-f64) | supported | 8108 | 3/4 | 15307.5 | 15377.5 | 15613.7 | 65327.5 | 0/4 |
 
 ## independent-float / suggest
 
-History: 1000; dimensions: 1; budget: 100.
+History: 100; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 93469.8 | 94008.7 | 96892.8 | 10698.6 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 92367.0 | 93248.1 | 94015.2 | 10826.4 | 4/4 |
-| parzen/full (scalar-f64) | supported | 184799.6 | 185745.2 | 186612.0 | 5411.3 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 183677.7 | 185254.2 | 187067.7 | 5444.3 | 0/4 |
-
-## independent-float / suggest
-
-History: 1000; dimensions: 4; budget: 100.
-
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| hyperopt | supported | 1673395.8 | 1683004.9 | 1686829.2 | 597.6 | 0/4 |
-| optimizer | supported | 692237.3 | 695993.9 | 702195.1 | 1444.6 | 0/4 |
-| parzen/bounded (pulp-avx2-fma) | supported | 481617.2 | 487356.6 | 490529.4 | 2076.3 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 547460.6 | 553908.2 | 568155.4 | 1826.6 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 990929.0 | 998562.5 | 1003356.9 | 1009.2 | 0/4 |
-| parzen/full (scalar-f64) | supported | 1120459.0 | 1132728.4 | 1140434.3 | 892.5 | 0/4 |
-| tpe | supported | 806554.7 | 820455.4 | 829234.1 | 1239.8 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 1500 | 3/4 | 74045.8 | 74611.8 | 76055.4 | 13505.2 | 3/4 |
+| parzen/bounded (scalar-f64) | supported | 1416 | 3/4 | 82994.8 | 83635.7 | 84270.2 | 12048.9 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 1660 | 3/4 | 73940.9 | 74930.0 | 76576.6 | 13524.3 | 1/4 |
+| parzen/full (scalar-f64) | supported | 1530 | 3/4 | 83359.6 | 83771.0 | 85936.6 | 11996.2 | 0/4 |
 
 ## independent-float / suggest
 
-History: 1000; dimensions: 8; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 1042933.2 | 1050755.9 | 1054152.8 | 958.8 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 1173040.2 | 1179873.2 | 1185734.5 | 852.5 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 2107722.5 | 2117633.4 | 2152862.5 | 474.4 | 0/4 |
-| parzen/full (scalar-f64) | supported | 2349687.9 | 2366907.2 | 2378481.7 | 425.6 | 0/4 |
-
-## independent-float / suggest
-
-History: 1000; dimensions: 16; budget: 100.
-
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 2180623.6 | 2190969.5 | 2204653.6 | 458.6 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 2382101.5 | 2412218.4 | 2419218.2 | 419.8 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 4351632.5 | 4369474.7 | 4394107.3 | 229.8 | 0/4 |
-| parzen/full (scalar-f64) | supported | 4760444.8 | 4813834.7 | 4859459.5 | 210.1 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 1244 | 3/4 | 93404.6 | 93894.9 | 94958.5 | 10706.1 | 2/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 1280 | 3/4 | 92569.0 | 94744.1 | 97432.6 | 10802.8 | 2/4 |
+| parzen/full (scalar-f64) | supported | 722 | 3/4 | 183242.9 | 185475.6 | 188000.5 | 5457.2 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 748 | 3/4 | 180076.4 | 186967.5 | 190588.8 | 5553.2 | 0/4 |
 
 ## independent-float / suggest
 
-History: 10000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 4; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 6936260.0 | 7004171.3 | 7073710.8 | 144.2 | 0/8 |
-| parzen/bounded (pulp-avx2-fma) | supported | 457467.6 | 464203.5 | 484545.3 | 2185.9 | 8/8 |
-| parzen/bounded (scalar-f64) | supported | 518344.4 | 528616.1 | 531807.7 | 1929.2 | 0/8 |
-| parzen/full (pulp-avx2-fma) | supported | 10744006.4 | 10849150.5 | 10989980.3 | 93.1 | 0/8 |
-| parzen/full (scalar-f64) | supported | 12331726.5 | 12430965.9 | 12475666.2 | 81.1 | 0/8 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| hyperopt | supported | 118 | 3/4 | 1664368.8 | 1688344.9 | 1703666.8 | 600.8 | 0/4 |
+| optimizer | supported | 284 | 3/4 | 692418.2 | 698301.9 | 703347.1 | 1444.2 | 0/4 |
+| parzen/bounded (pulp-avx2-fma) | supported | 256, 258 | 6/8 | 467340.8 | 486437.6 | 491593.8 | 2139.8 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 240 | 3/4 | 545200.5 | 552405.7 | 555922.6 | 1834.2 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 144 | 6/8 | 954786.9 | 1002035.3 | 1013107.7 | 1047.4 | 0/4 |
+| parzen/full (scalar-f64) | supported | 130 | 3/4 | 1121184.1 | 1131517.7 | 1138452.8 | 891.9 | 0/4 |
+| tpe | supported | 222 | 3/4 | 802213.2 | 809931.7 | 818551.8 | 1246.6 | 0/4 |
 
 ## independent-float / suggest
 
-History: 100000; dimensions: 4; budget: 100.
+History: 1000; dimensions: 8; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (pulp-avx2-fma) | supported | 439589.2 | 444751.7 | 447377.1 | 2274.9 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 497589.6 | 505606.6 | 510975.2 | 2009.7 | 0/4 |
-| parzen/full (pulp-avx2-fma) | supported | 159317766.0 | 160898185.0 | 161961029.0 | 6.3 | 0/4 |
-| parzen/full (scalar-f64) | supported | 176165939.0 | 177628357.0 | 179059850.0 | 5.7 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 122 | 3/4 | 1043807.5 | 1049758.6 | 1057733.0 | 958.0 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 116 | 3/4 | 1168633.5 | 1174277.9 | 1184778.7 | 855.7 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 70 | 3/4 | 2116487.1 | 2130111.3 | 2146292.0 | 472.5 | 0/4 |
+| parzen/full (scalar-f64) | supported | 64 | 3/4 | 2327764.2 | 2361670.1 | 2373884.3 | 429.6 | 0/4 |
+
+## independent-float / suggest
+
+History: 1000; dimensions: 16; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 60 | 3/4 | 2166794.5 | 2187698.8 | 2195763.8 | 461.5 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 56 | 3/4 | 2376191.8 | 2404757.7 | 2434280.2 | 420.8 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 34 | 3/4 | 4355854.9 | 4389092.7 | 4438492.5 | 229.6 | 0/4 |
+| parzen/full (scalar-f64) | supported | 32 | 3/4 | 4755899.5 | 4809062.4 | 4828641.0 | 210.3 | 0/4 |
+
+## independent-float / suggest
+
+History: 10000; dimensions: 4; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 36 | 7/8 | 6982913.5 | 7034039.5 | 7098063.2 | 143.2 | 0/8 |
+| parzen/bounded (pulp-avx2-fma) | supported | 654 | 7/8 | 455634.9 | 460751.9 | 464742.4 | 2194.7 | 8/8 |
+| parzen/bounded (scalar-f64) | supported | 606 | 7/8 | 520835.6 | 528356.7 | 530786.5 | 1920.0 | 0/8 |
+| parzen/full (pulp-avx2-fma) | supported | 17 | 7/8 | 10911348.3 | 11002589.9 | 16321666.6 | 91.6 | 0/8 |
+| parzen/full (scalar-f64) | supported | 30 | 7/8 | 12301494.0 | 12429481.2 | 12496525.4 | 81.3 | 0/8 |
+
+## independent-float / suggest
+
+History: 100000; dimensions: 4; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (pulp-avx2-fma) | supported | 256 | 3/4 | 439830.1 | 444222.4 | 450715.7 | 2273.6 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 238 | 3/4 | 496614.9 | 507422.0 | 509292.1 | 2013.6 | 0/4 |
+| parzen/full (pulp-avx2-fma) | supported | 1 | 3/4 | 161074772.0 | 161851520.0 | 164618337.0 | 6.2 | 0/4 |
+| parzen/full (scalar-f64) | supported | 1 | 3/4 | 175434689.0 | 176786371.0 | 178123264.0 | 5.7 | 0/4 |
 
 ## integer / cycle
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 8.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 146160.1 | 147361.0 | 148967.8 | 6841.8 | 4/4 |
-| parzen/bounded (scalar-f64) | supported | 525896.3 | 528877.5 | 532362.2 | 1901.5 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 524693.5 | 527637.0 | 540139.3 | 1905.9 | 0/4 |
-| parzen/full (scalar-f64) | supported | 643336.9 | 648480.4 | 651709.7 | 1554.4 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 644077.4 | 650658.8 | 655884.2 | 1552.6 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 139534.9 | 144000.6 | 145954.7 | 7166.7 | 1/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 141618.6 | 142633.4 | 145309.1 | 7061.2 | 1/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 144445.8 | 145566.3 | 147280.3 | 6923.0 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 16.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 143210.6 | 146447.1 | 147523.5 | 6982.7 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 167628.0 | 168705.2 | 171862.9 | 5965.6 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 188421.3 | 190673.0 | 192628.6 | 5307.3 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 32.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 139737.4 | 144730.7 | 152996.9 | 7156.3 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 186978.9 | 189005.8 | 190556.6 | 5348.2 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 246605.9 | 248435.6 | 256375.3 | 4055.1 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 64.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 141012.2 | 143723.1 | 147345.2 | 7091.6 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 254772.1 | 255613.8 | 260916.7 | 3925.1 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 406398.2 | 409496.2 | 413400.0 | 2460.6 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 50 | 3/4 | 142310.9 | 145009.1 | 149563.4 | 7026.9 | 4/4 |
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 519548.4 | 523657.9 | 526453.2 | 1924.7 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 6/8 | 520083.4 | 525410.6 | 532031.1 | 1922.8 | 0/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 711338.7 | 719187.3 | 724117.8 | 1405.8 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 6/8 | 710190.9 | 717991.3 | 723274.0 | 1408.1 | 0/4 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 256.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 142279.8 | 146594.8 | 147609.2 | 7028.4 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 554989.7 | 558645.0 | 562423.9 | 1801.8 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 899464.0 | 900754.8 | 904660.1 | 1111.8 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 1024.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 140694.2 | 144359.5 | 145446.3 | 7107.6 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 657759.0 | 661889.5 | 663770.7 | 1520.3 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 1219604.5 | 1221611.7 | 1234498.0 | 819.9 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 4096.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 140349.8 | 144180.6 | 144933.9 | 7125.1 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 684668.4 | 688121.7 | 693502.2 | 1460.6 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 1292951.4 | 1303908.5 | 1309216.6 | 773.4 | 0/2 |
+
+## integer / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 100001.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 25 | 1/2 | 143491.4 | 148226.8 | 156614.6 | 6969.1 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 705725.7 | 707897.4 | 712803.5 | 1417.0 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25 | 1/2 | 1370651.7 | 1375635.4 | 1384002.4 | 729.6 | 0/2 |
 
 ## integer / memory
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Retained after ingest | Retained at cycle end | Cycle bytes/op | Peak live bytes | Peak RSS bytes |
 |---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 780922 | 1102784 | 41108.7 | 1120306 | 4980736 |
+| optimizer | supported | 780922 | 1102784 | 41108.7 | 1120306 | 5111808 |
 | parzen/bounded (scalar-f64-policy-fallback) | supported | 85608 | 175448 | 753.3 | 175464 | 3932160 |
 | parzen/full (scalar-f64-policy-fallback) | supported | 114832 | 319840 | 30891.4 | 336240 | 4194304 |
 
 ## integer / quality
 
-History: 1000; dimensions: 1; budget: 25.
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -499,7 +601,7 @@ History: 1000; dimensions: 1; budget: 25.
 
 ## integer / quality
 
-History: 1000; dimensions: 1; budget: 50.
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -510,7 +612,7 @@ History: 1000; dimensions: 1; budget: 50.
 
 ## integer / quality
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -521,7 +623,7 @@ History: 1000; dimensions: 1; budget: 100.
 
 ## integer / quality
 
-History: 1000; dimensions: 1; budget: 250.
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -532,19 +634,99 @@ History: 1000; dimensions: 1; budget: 250.
 
 ## integer / suggest
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 8.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| optimizer | supported | 140804.2 | 142418.6 | 143635.1 | 7102.1 | 0/4 |
-| parzen/bounded (scalar-f64) | supported | 1768.8 | 1780.8 | 1961.1 | 565340.9 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 1624.5 | 1629.7 | 1645.7 | 615580.2 | 0/4 |
-| parzen/full (scalar-f64) | supported | 1588.8 | 1600.5 | 1677.9 | 629391.0 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 1516.6 | 1523.1 | 1532.5 | 659383.8 | 4/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 348 | 1/2 | 135168.4 | 135683.9 | 136781.4 | 7398.2 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 23100 | 1/2 | 1152.3 | 1164.9 | 1173.8 | 867802.2 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 25080 | 1/2 | 1055.8 | 1060.1 | 1064.6 | 947150.8 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 16.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 334 | 1/2 | 141158.1 | 143252.8 | 143790.2 | 7084.3 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 21460 | 1/2 | 1312.8 | 1323.6 | 1372.9 | 761712.3 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 41400 | 1/2 | 1154.7 | 1170.4 | 1176.2 | 866023.0 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 32.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 332 | 1/2 | 137088.5 | 138228.6 | 138498.7 | 7294.6 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 15240 | 1/2 | 1569.4 | 1575.7 | 1692.4 | 637183.3 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 23086 | 1/2 | 1317.0 | 1341.4 | 1346.9 | 759285.3 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 64.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 338 | 1/2 | 140546.0 | 141062.2 | 141750.9 | 7115.1 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 19740 | 1/2 | 1686.9 | 1692.6 | 1705.3 | 592800.3 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 20160 | 1/2 | 1502.9 | 1510.2 | 1519.8 | 665401.7 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 1370 | 3/4 | 141682.4 | 142948.1 | 143636.3 | 7058.0 | 0/4 |
+| parzen/bounded (scalar-f64) | supported | 63504 | 3/4 | 1743.8 | 1761.9 | 1789.2 | 573467.5 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 70560, 71280 | 6/8 | 1619.4 | 1634.9 | 1652.5 | 617506.1 | 0/4 |
+| parzen/full (scalar-f64) | supported | 117936 | 3/4 | 1570.0 | 1581.0 | 1591.9 | 636953.7 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 123396 | 6/8 | 1512.6 | 1524.8 | 1537.7 | 661122.8 | 4/4 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 256.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 340 | 1/2 | 139781.1 | 143015.3 | 143935.9 | 7154.0 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 16512 | 1/2 | 2022.4 | 2043.8 | 2076.5 | 494453.1 | 2/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 13200 | 1/2 | 2444.5 | 2465.8 | 2503.6 | 409085.9 | 0/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 1024.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 338 | 1/2 | 139127.4 | 140650.9 | 141705.1 | 7187.7 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 936 | 1/2 | 27917.1 | 28045.6 | 28253.8 | 35820.3 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 1008 | 1/2 | 26200.8 | 26389.7 | 26540.4 | 38166.8 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 4096.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 322 | 1/2 | 140173.8 | 141223.0 | 141772.1 | 7134.0 | 0/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 240 | 1/2 | 104770.7 | 105730.8 | 105810.6 | 9544.7 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 304 | 1/2 | 95177.5 | 95690.2 | 96132.8 | 10506.7 | 2/2 |
+
+## integer / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 100001.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| optimizer | supported | 336 | 1/2 | 141981.5 | 142590.5 | 143312.2 | 7043.2 | 2/2 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 72 | 1/2 | 598658.4 | 599980.2 | 601815.0 | 1670.4 | 0/2 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 36 | 1/2 | 1248869.1 | 1254458.2 | 1264451.5 | 800.7 | 0/2 |
 
 ## linear-float / quality
 
-History: 1000; dimensions: 1; budget: 25.
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -555,7 +737,7 @@ History: 1000; dimensions: 1; budget: 25.
 
 ## linear-float / quality
 
-History: 1000; dimensions: 1; budget: 50.
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -566,7 +748,7 @@ History: 1000; dimensions: 1; budget: 50.
 
 ## linear-float / quality
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -577,7 +759,7 @@ History: 1000; dimensions: 1; budget: 100.
 
 ## linear-float / quality
 
-History: 1000; dimensions: 1; budget: 250.
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -588,18 +770,18 @@ History: 1000; dimensions: 1; budget: 250.
 
 ## log-float / cycle
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 155839.7 | 157646.6 | 158787.6 | 6416.9 | 3/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 156471.5 | 158068.0 | 160253.4 | 6390.9 | 1/4 |
-| parzen/full (scalar-f64) | supported | 289506.7 | 293266.7 | 294987.3 | 3454.2 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 287534.0 | 290029.6 | 292246.6 | 3477.8 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 158655.5 | 160730.3 | 164152.8 | 6303.0 | 3/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 160421.1 | 162056.1 | 163531.4 | 6233.6 | 1/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 290172.0 | 294008.7 | 297074.0 | 3446.2 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 289501.0 | 293505.5 | 295519.2 | 3454.2 | 0/4 |
 
 ## log-float / quality
 
-History: 1000; dimensions: 1; budget: 25.
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -610,7 +792,7 @@ History: 1000; dimensions: 1; budget: 25.
 
 ## log-float / quality
 
-History: 1000; dimensions: 1; budget: 50.
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -621,7 +803,7 @@ History: 1000; dimensions: 1; budget: 50.
 
 ## log-float / quality
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -632,7 +814,7 @@ History: 1000; dimensions: 1; budget: 100.
 
 ## log-float / quality
 
-History: 1000; dimensions: 1; budget: 250.
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -643,29 +825,29 @@ History: 1000; dimensions: 1; budget: 250.
 
 ## log-float / suggest
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 97248.8 | 97913.4 | 98551.4 | 10282.9 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 96892.7 | 97269.0 | 98210.5 | 10320.7 | 4/4 |
-| parzen/full (scalar-f64) | supported | 192019.1 | 194000.1 | 195625.0 | 5207.8 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 191373.4 | 192390.4 | 193120.4 | 5225.4 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 1190 | 3/4 | 97389.8 | 97802.7 | 98258.2 | 10268.0 | 3/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 1284 | 3/4 | 96558.9 | 100180.3 | 101696.6 | 10356.4 | 1/4 |
+| parzen/full (scalar-f64) | supported | 724 | 3/4 | 191918.1 | 193074.5 | 194177.8 | 5210.6 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 708 | 3/4 | 189858.5 | 193419.5 | 197760.3 | 5267.1 | 0/4 |
 
 ## mixed-independent / cycle
 
-History: 1000; dimensions: 3; budget: 100.
+History: 1000; dimensions: 3; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 787363.1 | 796085.0 | 799468.6 | 1270.1 | 3/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 790840.5 | 796347.8 | 801908.1 | 1264.5 | 1/4 |
-| parzen/full (scalar-f64) | supported | 1407983.2 | 1416888.5 | 1423703.3 | 710.2 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 1406931.0 | 1418707.4 | 1429773.4 | 710.8 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 781789.8 | 791066.4 | 797746.6 | 1279.1 | 2/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 785297.7 | 792016.6 | 797698.8 | 1273.4 | 2/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 1567152.6 | 1576837.5 | 1599595.2 | 638.1 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 1565048.4 | 1576928.5 | 1586496.5 | 639.0 | 0/4 |
 
 ## mixed-independent / quality
 
-History: 1000; dimensions: 3; budget: 25.
+History: 1000; dimensions: 3; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -676,7 +858,7 @@ History: 1000; dimensions: 3; budget: 25.
 
 ## mixed-independent / quality
 
-History: 1000; dimensions: 3; budget: 50.
+History: 1000; dimensions: 3; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -687,7 +869,7 @@ History: 1000; dimensions: 3; budget: 50.
 
 ## mixed-independent / quality
 
-History: 1000; dimensions: 3; budget: 100.
+History: 1000; dimensions: 3; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -698,7 +880,7 @@ History: 1000; dimensions: 3; budget: 100.
 
 ## mixed-independent / quality
 
-History: 1000; dimensions: 3; budget: 250.
+History: 1000; dimensions: 3; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -709,29 +891,95 @@ History: 1000; dimensions: 3; budget: 250.
 
 ## mixed-independent / suggest
 
-History: 1000; dimensions: 3; budget: 100.
+History: 1000; dimensions: 3; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 110591.1 | 112278.6 | 113462.4 | 9042.3 | 2/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 111335.3 | 112128.1 | 124425.8 | 8981.9 | 2/4 |
-| parzen/full (scalar-f64) | supported | 233946.9 | 234760.7 | 236876.0 | 4274.5 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 234242.5 | 235344.2 | 236388.8 | 4269.1 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 1428 | 3/4 | 110860.4 | 112467.3 | 113613.3 | 9020.3 | 3/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 1428 | 3/4 | 112134.6 | 112887.8 | 113625.6 | 8917.9 | 1/4 |
+| parzen/full (scalar-f64) | supported | 732 | 3/4 | 234733.1 | 239070.6 | 240929.0 | 4260.2 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 708 | 3/4 | 235368.6 | 238925.3 | 243240.9 | 4248.7 | 0/4 |
+
+## stepped-float / cycle
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 681591.5 | 684830.6 | 689349.7 | 1467.2 | 3/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 680707.9 | 689444.8 | 710254.2 | 1469.1 | 1/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 1270772.7 | 1278840.5 | 1286800.6 | 786.9 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 1258134.0 | 1273110.1 | 1286074.2 | 794.8 | 0/4 |
+
+## stepped-float / quality
+
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
+
+| Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
+|---|---|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.250000 | 84.4% | 0.000000 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.250000 | 84.4% | 0.000000 |
+| parzen/full (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.250000 | 84.4% | 0.000000 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.250000 | 84.4% | 0.000000 |
+
+## stepped-float / quality
+
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
+
+| Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
+|---|---|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+
+## stepped-float / quality
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
+|---|---|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+
+## stepped-float / quality
+
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
+
+| Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
+|---|---|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 32 | 0.000000 | 0.000000 | 0.000000 | 100.0% | 0.000000 |
+
+## stepped-float / suggest
+
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
+
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 302 | 3/4 | 596640.1 | 603393.1 | 607038.1 | 1676.1 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 284 | 3/4 | 594430.2 | 598655.5 | 603691.2 | 1682.3 | 4/4 |
+| parzen/full (scalar-f64) | supported | 148 | 3/4 | 1149599.5 | 1154432.5 | 1223920.5 | 869.9 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 160 | 3/4 | 1139387.5 | 1148664.4 | 1157472.9 | 877.7 | 0/4 |
 
 ## stepped-integer / cycle
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 304022.1 | 306873.0 | 310424.6 | 3289.2 | 3/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 305664.7 | 308768.5 | 312495.3 | 3271.6 | 1/4 |
-| parzen/full (scalar-f64) | supported | 312795.6 | 314667.9 | 316750.6 | 3197.0 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 311641.1 | 317969.3 | 319833.1 | 3208.8 | 0/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 50 | 3/4 | 304397.4 | 313322.2 | 319236.4 | 3285.2 | 1/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 300022.7 | 304913.4 | 312439.6 | 3333.1 | 3/4 |
+| parzen/full (scalar-f64) | supported | 50 | 3/4 | 347884.2 | 352419.8 | 356490.5 | 2874.5 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 50 | 3/4 | 335202.1 | 337545.0 | 343798.5 | 2983.3 | 0/4 |
 
 ## stepped-integer / quality
 
-History: 1000; dimensions: 1; budget: 25.
+History: 1000; dimensions: 1; budget: 25; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -742,7 +990,7 @@ History: 1000; dimensions: 1; budget: 25.
 
 ## stepped-integer / quality
 
-History: 1000; dimensions: 1; budget: 50.
+History: 1000; dimensions: 1; budget: 50; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -753,7 +1001,7 @@ History: 1000; dimensions: 1; budget: 50.
 
 ## stepped-integer / quality
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -764,7 +1012,7 @@ History: 1000; dimensions: 1; budget: 100.
 
 ## stepped-integer / quality
 
-History: 1000; dimensions: 1; budget: 250.
+History: 1000; dimensions: 1; budget: 250; integer cardinality: 201.
 
 | Backend | Status | Seeds | Median regret | p10 regret | p90 regret | Success ≤ 0.01 | Median best |
 |---|---|---:|---:|---:|---:|---:|---:|
@@ -775,11 +1023,11 @@ History: 1000; dimensions: 1; budget: 250.
 
 ## stepped-integer / suggest
 
-History: 1000; dimensions: 1; budget: 100.
+History: 1000; dimensions: 1; budget: 100; integer cardinality: 201.
 
-| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
-|---|---|---:|---:|---:|---:|---:|
-| parzen/bounded (scalar-f64) | supported | 1440.5 | 1452.7 | 1502.7 | 694191.5 | 0/4 |
-| parzen/bounded (scalar-f64-policy-fallback) | supported | 1400.2 | 1406.7 | 1419.8 | 714170.8 | 0/4 |
-| parzen/full (scalar-f64) | supported | 1353.7 | 1360.5 | 1363.7 | 738726.5 | 0/4 |
-| parzen/full (scalar-f64-policy-fallback) | supported | 1323.3 | 1332.0 | 1351.1 | 755679.4 | 4/4 |
+| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |
+|---|---|---:|---:|---:|---:|---:|---:|---:|
+| parzen/bounded (scalar-f64) | supported | 135904 | 3/4 | 1422.0 | 1497.6 | 1691.7 | 703221.0 | 0/4 |
+| parzen/bounded (scalar-f64-policy-fallback) | supported | 137392 | 3/4 | 1401.8 | 1413.8 | 1419.7 | 713383.1 | 0/4 |
+| parzen/full (scalar-f64) | supported | 134652 | 3/4 | 1338.2 | 1355.2 | 1424.5 | 747273.9 | 0/4 |
+| parzen/full (scalar-f64-policy-fallback) | supported | 138460 | 3/4 | 1322.5 | 1330.5 | 1339.5 | 756150.0 | 4/4 |
