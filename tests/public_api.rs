@@ -270,3 +270,40 @@ fn packed_history_has_a_compact_measured_capacity() {
     assert!(study.history_capacity_bytes() < 24 * 1024 * 1024);
     assert!(study.estimator_history_len() <= 537 * 4);
 }
+
+#[test]
+fn optimized_build_is_deterministic_for_the_same_seed() {
+    fn study(seed: u64) -> Study {
+        let mut space = SearchSpace::new();
+        for name in ["a", "b", "c", "d"] {
+            space
+                .add(
+                    name,
+                    Distribution::Float(FloatDistribution::linear(-5.0, 5.0).unwrap()),
+                )
+                .unwrap();
+        }
+        let sampler = TpeSampler::new(
+            TpeSamplerConfig::performance(seed)
+                .startup_trials(10)
+                .model(ModelStrategy::Independent),
+        )
+        .unwrap();
+        Study::new(Direction::Minimize, sampler, space).unwrap()
+    }
+
+    let mut first = study(0x5eed);
+    let mut second = study(0x5eed);
+    for iteration in 0..80 {
+        let mut first_values = Vec::new();
+        let mut second_values = Vec::new();
+        for name in ["a", "b", "c", "d"] {
+            first_values.push(first.suggest_float(name).unwrap());
+            second_values.push(second.suggest_float(name).unwrap());
+        }
+        assert_eq!(first_values, second_values, "iteration {iteration}");
+        let objective = first_values.iter().map(|value| value * value).sum();
+        first.complete_trial(objective).unwrap();
+        second.complete_trial(objective).unwrap();
+    }
+}
