@@ -336,6 +336,7 @@ fn run() -> HarnessResult<()> {
                     .shard
                     .map(|shard| format!("{}/{}", shard.index + 1, shard.count));
                 record.binary_checksum = Some(binary_checksum);
+                record.mix_driver_metadata_checksum();
                 if record.execution_error.is_some() && !skip {
                     failed_operations.insert(operation_key);
                     if matches!(case.operation, Operation::ColdSuggest | Operation::Suggest) {

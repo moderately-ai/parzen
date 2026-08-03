@@ -14,6 +14,7 @@ mod history;
 mod math;
 mod mixture;
 mod prepared;
+mod vector_math;
 mod workspace;
 
 use std::{num::NonZeroUsize, sync::Arc};
@@ -535,6 +536,29 @@ impl TpeSampler {
                 .good
                 .sample_values(&mut self.rng, &mut self.workspace.candidates.values)?;
         }
+        let continuous = cache.good.is_all_continuous() && cache.bad.is_all_continuous();
+        if continuous {
+            for candidate in self.workspace.candidates.values.chunks_exact(dimensions) {
+                cache.good.append_continuous_values(
+                    candidate,
+                    &mut self.workspace.candidates.transformed_values,
+                )?;
+            }
+            cache.good.log_pdf_continuous_batch(
+                &self.workspace.candidates.transformed_values,
+                candidates,
+                &mut self.workspace.candidates.good_scores,
+                &mut self.workspace.good_components,
+                &mut self.workspace.candidates.component_scores,
+            )?;
+            cache.bad.log_pdf_continuous_batch(
+                &self.workspace.candidates.transformed_values,
+                candidates,
+                &mut self.workspace.candidates.bad_scores,
+                &mut self.workspace.bad_components,
+                &mut self.workspace.candidates.component_scores,
+            )?;
+        }
         let mut best_score = f64::NEG_INFINITY;
         let mut best = None;
         for (index, candidate) in self
@@ -544,6 +568,15 @@ impl TpeSampler {
             .chunks_exact(dimensions)
             .enumerate()
         {
+            if continuous {
+                let score = self.workspace.candidates.good_scores[index]
+                    - self.workspace.candidates.bad_scores[index];
+                if score.is_finite() && score > best_score {
+                    best_score = score;
+                    best = Some(index);
+                }
+                continue;
+            }
             let integer = match candidate {
                 [ParamValue::Int(value)] => Some(*value),
                 _ => None,
@@ -581,8 +614,8 @@ impl TpeSampler {
             {
                 cache.discrete_scores.push((value, good, bad));
             }
-            self.workspace.candidates.good_scores.push(good);
-            self.workspace.candidates.bad_scores.push(bad);
+            self.workspace.candidates.good_scores[index] = good;
+            self.workspace.candidates.bad_scores[index] = bad;
             let score = good - bad;
             if score.is_finite() && score > best_score {
                 best_score = score;

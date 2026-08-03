@@ -117,6 +117,53 @@ pub struct BenchmarkRecord {
 }
 
 impl BenchmarkRecord {
+    pub fn mix_measurement_metadata_checksum(&mut self) {
+        let mut metadata = self.benchmark_protocol.checksum_tag();
+        metadata = mix_bool(metadata, self.parzen_simd_feature);
+        metadata = mix_text(metadata, self.numeric_backend.as_deref());
+        metadata = mix_usize(metadata, self.simd_lane_width_f64);
+        metadata = mix_text(metadata, self.transcendental_contract.as_deref());
+        metadata = mix_u64(metadata, self.exceptional_lane_fallbacks);
+        metadata = mix_u64(
+            metadata,
+            self.calibration_duration_seconds.map(f64::to_bits),
+        );
+        self.result_checksum = self.result_checksum.rotate_left(11) ^ metadata;
+    }
+
+    pub fn mix_driver_metadata_checksum(&mut self) {
+        let mut metadata = 0xcbf2_9ce4_8422_2325_u64;
+        metadata = mix_u64(metadata, self.case_timeout_seconds);
+        metadata = mix_u64(metadata, self.suite_timeout_seconds);
+        metadata = mix_text(metadata, self.shard.as_deref());
+        metadata = mix_text(metadata, self.binary_checksum.as_deref());
+        self.result_checksum = self.result_checksum.rotate_left(13) ^ metadata;
+    }
+}
+
+fn mix_bool(checksum: u64, value: Option<bool>) -> u64 {
+    mix_u64(checksum, value.map(u64::from))
+}
+
+fn mix_usize(checksum: u64, value: Option<usize>) -> u64 {
+    mix_u64(checksum, value.map(|value| value as u64))
+}
+
+fn mix_u64(mut checksum: u64, value: Option<u64>) -> u64 {
+    for byte in value.unwrap_or(u64::MAX).to_le_bytes() {
+        checksum = (checksum ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
+    }
+    checksum
+}
+
+fn mix_text(mut checksum: u64, value: Option<&str>) -> u64 {
+    for byte in value.unwrap_or("<none>").bytes() {
+        checksum = (checksum ^ u64::from(byte)).wrapping_mul(0x100_0000_01b3);
+    }
+    checksum
+}
+
+impl BenchmarkRecord {
     #[must_use]
     pub fn unsupported(
         backend: &str,

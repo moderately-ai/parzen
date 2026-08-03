@@ -8,8 +8,10 @@ use crate::ParamValue;
 #[derive(Default)]
 pub(crate) struct CandidateBatch {
     pub values: Vec<ParamValue>,
+    pub transformed_values: Vec<f64>,
     pub good_scores: Vec<f64>,
     pub bad_scores: Vec<f64>,
+    pub component_scores: Vec<f64>,
     pub candidates: usize,
     pub dimensions: usize,
 }
@@ -17,13 +19,17 @@ pub(crate) struct CandidateBatch {
 impl CandidateBatch {
     pub(crate) fn clear(&mut self, candidates: usize, dimensions: usize) {
         self.values.clear();
+        self.transformed_values.clear();
         self.good_scores.clear();
         self.bad_scores.clear();
         self.candidates = candidates;
         self.dimensions = dimensions;
         self.values.reserve(candidates.saturating_mul(dimensions));
-        self.good_scores.reserve(candidates);
-        self.bad_scores.reserve(candidates);
+        self.transformed_values
+            .reserve(candidates.saturating_mul(dimensions));
+        self.good_scores.resize(candidates, 0.0);
+        self.bad_scores.resize(candidates, 0.0);
+        self.component_scores.resize(candidates, 0.0);
     }
 
     pub(crate) fn previous_duplicate(&self, index: usize) -> Option<usize> {

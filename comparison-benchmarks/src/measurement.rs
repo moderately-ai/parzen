@@ -37,6 +37,19 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         fixture_count,
         config.seed ^ 0xd1b5_4a32_d192_ed03,
     )?;
+    let parzen_simd = (B::NAME == "parzen").then_some(cfg!(feature = "parzen-simd"));
+    let (numeric_backend, lane_width, transcendental_contract) =
+        if B::NAME == "parzen" && cfg!(feature = "parzen-simd") {
+            parzen_simd_metadata()
+        } else if B::NAME == "parzen" {
+            (
+                Some("scalar-f64".to_owned()),
+                Some(1),
+                Some("platform f64 scalar transcendental functions".to_owned()),
+            )
+        } else {
+            (None, None, None)
+        };
     let mut record = BenchmarkRecord {
         schema_version: SCHEMA_VERSION,
         backend: B::NAME.to_owned(),
@@ -46,10 +59,10 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         suite_timeout_seconds: None,
         shard: None,
         binary_checksum: None,
-        parzen_simd_feature: None,
-        numeric_backend: None,
-        simd_lane_width_f64: None,
-        transcendental_contract: None,
+        parzen_simd_feature: parzen_simd,
+        numeric_backend,
+        simd_lane_width_f64: lane_width,
+        transcendental_contract,
         exceptional_lane_fallbacks: None,
         calibration_duration_seconds: None,
         scenario: config.scenario,
@@ -82,9 +95,57 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         Operation::Profile => run_profile::<B>(&config, &fixture, &mut record)?,
         _ => run_timing::<B>(&config, &fixture, &mut record)?,
     }
-    record.result_checksum =
-        record.result_checksum.rotate_left(11) ^ config.protocol.checksum_tag();
+    record.mix_measurement_metadata_checksum();
     Ok(record)
+}
+
+fn parzen_simd_metadata() -> (Option<String>, Option<usize>, Option<String>) {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
+        {
+            return (
+                Some("pulp-avx2-fma".to_owned()),
+                Some(4),
+                Some(
+                    "four-ULP f64 exp on ordinary lanes; scalar exceptional lanes; platform scalar ln/erfc"
+                        .to_owned(),
+                ),
+            );
+        }
+        return (
+            Some("pulp-runtime-x86".to_owned()),
+            Some(2),
+            Some("platform f64 scalar transcendental functions".to_owned()),
+        );
+    }
+    #[cfg(target_arch = "aarch64")]
+    {
+        return (
+            Some("pulp-neon".to_owned()),
+            Some(2),
+            Some("platform f64 scalar transcendental functions".to_owned()),
+        );
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        let lanes = if cfg!(target_feature = "simd128") {
+            2
+        } else {
+            1
+        };
+        return (
+            Some("pulp-runtime-wasm".to_owned()),
+            Some(lanes),
+            Some("platform f64 scalar transcendental functions".to_owned()),
+        );
+    }
+    #[allow(unreachable_code)]
+    (
+        Some("pulp-portable-scalar".to_owned()),
+        Some(1),
+        Some("platform f64 scalar transcendental functions".to_owned()),
+    )
 }
 
 fn run_timing<B: Backend>(

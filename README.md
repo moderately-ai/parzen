@@ -75,9 +75,10 @@ probability over each discrete cell instead of scoring a pre-quantized continuou
 stepped floats within four ULPs of a grid point are stored in canonical grid form.
 
 The crate is deterministic for a fixed seed, configuration, search space, observation order, minor
-crate version, and target architecture. Serde support is enabled by default, validates distributions
-while deserializing, rejects unknown distribution fields, and can be disabled with
-`default-features = false`.
+crate version, and target architecture. Serde support and runtime-dispatched SIMD are enabled by
+default. The `simd` feature uses `pulp` internally for stable-Rust f64 kernels with a portable scalar
+fallback; no SIMD types appear in Parzen's public API. Disable either feature independently with
+`default-features = false` and an explicit feature list.
 
 See [MIGRATING-0.1-TO-0.2.md](MIGRATING-0.1-TO-0.2.md) for the v0.1 migration guide.
 

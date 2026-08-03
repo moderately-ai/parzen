@@ -418,6 +418,74 @@ impl ProductMixture {
         Ok(math::logsumexp(scratch))
     }
 
+    pub(crate) fn is_all_continuous(&self) -> bool {
+        self.kernels
+            .iter()
+            .all(|kernel| matches!(kernel, KernelSet::Numeric(kernels) if !kernels.discrete))
+    }
+
+    pub(crate) fn append_continuous_values(
+        &self,
+        candidate: &[ParamValue],
+        output: &mut Vec<f64>,
+    ) -> Result<(), ParzenError> {
+        if candidate.len() != self.kernels.len() {
+            return Err(ParzenError::InternalModel(
+                "candidate dimension count does not match estimator".into(),
+            ));
+        }
+        for (value, kernel) in candidate.iter().copied().zip(&self.kernels) {
+            let KernelSet::Numeric(kernels) = kernel else {
+                return Err(ParzenError::InternalModel(
+                    "continuous batch contains a categorical kernel".into(),
+                ));
+            };
+            output.push(kernels.transform_continuous(value)?);
+        }
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn log_pdf_continuous_batch(
+        &self,
+        values: &[f64],
+        candidates: usize,
+        output: &mut [f64],
+        log_weights: &mut Vec<f64>,
+        component_scores: &mut Vec<f64>,
+    ) -> Result<(), ParzenError> {
+        let mut dimensions = SmallVec::<[super::vector_math::ContinuousDimension<'_>; 8]>::new();
+        for kernel in &self.kernels {
+            let KernelSet::Numeric(kernels) = kernel else {
+                return Err(ParzenError::InternalModel(
+                    "continuous batch contains a categorical kernel".into(),
+                ));
+            };
+            if kernels.discrete {
+                return Err(ParzenError::InternalModel(
+                    "continuous batch contains a discrete kernel".into(),
+                ));
+            }
+            dimensions.push(super::vector_math::ContinuousDimension {
+                means: &kernels.means,
+                inverse_sigmas: &kernels.inverse_sigmas,
+                log_coefficients: &kernels.log_coefficients,
+            });
+        }
+        log_weights.clear();
+        self.weights.fill_log_weights(log_weights);
+        component_scores.resize(log_weights.len(), 0.0);
+        super::vector_math::continuous_log_pdf_batch(
+            values,
+            candidates,
+            &dimensions,
+            log_weights,
+            output,
+            component_scores,
+        );
+        Ok(())
+    }
+
     pub(crate) fn candidate_from_values(
         &self,
         values: &[ParamValue],
@@ -651,6 +719,21 @@ impl NumericKernels {
             *score += self.log_coefficients[component] - 0.5 * z * z;
         }
         Ok(())
+    }
+
+    fn transform_continuous(&self, value: ParamValue) -> Result<f64, ParzenError> {
+        if self.discrete {
+            return Err(ParzenError::InternalModel(
+                "discrete candidate used in continuous batch".into(),
+            ));
+        }
+        match (&self.distribution, value) {
+            (Distribution::Float(dist), ParamValue::Float(value)) => Ok(dist.transform(value)),
+            (Distribution::Int(dist), ParamValue::Int(value)) => Ok(dist.transform(value)),
+            _ => Err(ParzenError::InternalModel(
+                "numeric candidate type mismatch".into(),
+            )),
+        }
     }
 
     fn cell(&self, value: ParamValue) -> Result<(f64, f64, f64, f64), ParzenError> {

@@ -22,6 +22,7 @@ hashbrown = "=0.17.1"
 libm = "=0.2.16"
 rand = "=0.9.3"
 rand_distr = "=0.5.1"
+pulp = { version = "=0.22.3", default-features = false, features = ["std", "x86-v3"], optional = true }
 serde = { version = "=1.0.228", features = ["derive"], optional = true }
 smallvec = "=1.15.1"
 
@@ -31,8 +32,9 @@ proptest = "=1.11.0"
 serde_json = { version = "=1.0.149", features = ["arbitrary_precision"] }
 
 [features]
-default = ["serde"]
+default = ["serde", "simd"]
 serde = ["dep:serde"]
+simd = ["dep:pulp"]
 
 [[bench]]
 name = "suggestion"

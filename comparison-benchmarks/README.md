@@ -9,6 +9,11 @@ The crate is intentionally outside the root package and CI. It inherits the
 repository's Rust 1.89.0 toolchain, owns its lockfile and target directory, and
 must never be published.
 
+The default `parzen-simd` feature benchmarks Parzen's `pulp` runtime backend.
+Build with `--no-default-features` for the scalar control. SIMD remains behind
+Parzen's crate-private numeric boundary so a future stable `std::simd` backend
+can replace `pulp` without changing Parzen's public API or benchmark semantics.
+
 ## Build and smoke test
 
 Build every executable before measuring, then invoke the compiled driver:

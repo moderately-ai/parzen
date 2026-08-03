@@ -3,6 +3,8 @@
 ## [Unreleased]
 
 - Raise the minimum supported Rust version from 1.88 to 1.89.
+- Add optional, default-enabled runtime-dispatched SIMD for continuous TPE acquisition while
+  retaining an exact scalar fallback and an implementation-independent public API.
 
 ## [0.2.0] - 2026-07-31
 

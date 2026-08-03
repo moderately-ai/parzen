@@ -22,8 +22,9 @@ tpe = "=0.3.1"
 wait-timeout = "=0.2.1"
 
 [features]
-default = []
+default = ["parzen-simd"]
 dhat-heap = ["dep:dhat"]
+parzen-simd = ["parzen/simd"]
 
 [profile.profiling]
 inherits = "release"
