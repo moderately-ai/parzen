@@ -53,7 +53,8 @@ estimate without running anything. Quick, checkpoint, and curated protocols use
 case/suite timeout defaults of 45 seconds/8 minutes, 120 seconds/30 minutes, and
 300 seconds/45 minutes respectively. A suite estimated above 45 minutes is
 rejected unless `--allow-long-run` is explicit. Completed JSONL records are
-flushed after every child invocation.
+flushed after every child invocation. A selected shard estimated above 20
+minutes is also rejected unless the long-run override is explicit.
 It captures static toolchain, repository, machine, and load preflight data once
 per suite and passes that snapshot to each isolated backend process. Children
 refresh their timestamp and CPU affinity without repeatedly launching diagnostic
@@ -71,7 +72,10 @@ comparison-benchmarks/target/release/compare scaling \
 
 `--resume` validates the existing JSONL and skips records matching the commit,
 binary checksum, backend, feature configuration, case, protocol, and comparison
-round. A malformed or old-schema file is rejected rather than partially used.
+round. It also reuses a completed calibration only for the same binary checksum,
+backend configuration, case, and protocol; the chosen iteration count and reuse
+status are recorded in schema-v6 output. A malformed or old-schema file is
+rejected rather than partially used.
 
 Regenerate a report deterministically from existing JSONL:
 
@@ -82,7 +86,8 @@ comparison-benchmarks/target/release/compare report results.jsonl --output resul
 Quick timing uses `Instant`, one warmup, calibration to at least 25 ms, three
 internal samples, and two rotated comparison rounds. Checkpoint uses
 `2/100 ms/5/4`; curated uses `3/250 ms/10/8`. Explicit numeric flags can still
-override a protocol for a focused diagnostic. Quick and checkpoint results are
+override a protocol for a focused diagnostic. The isolated backend binaries use
+the same defaults when `--protocol` is passed directly. Quick and checkpoint results are
 screening evidence; final runtime claims require curated measurements. The
 primary number is the minimum ns/op as a
 noise-floor estimate; median, mean, standard deviation, p90, p95, throughput,
@@ -95,10 +100,12 @@ starts from a newly constructed adapter with identical fixture history.
 one complete fixture history per sample. Cold suggestion measures one first
 guided suggestion per sample because batching it would rebuild and ingest an
 untimed history for every measured operation. Automatic update and cycle
-calibration is capped at 100 operations so a sample does not silently turn a
-fixed-history question into a materially different, ever-growing history.
-All calibration begins at one operation, grows geometrically, and stops at a
-fixed iteration ceiling. The harness never sleeps to manufacture quiet time.
+calibration is capped at 25, 50, or 100 operations for quick, checkpoint, or
+curated runs so a sample does not silently turn a fixed-history question into a
+materially different, ever-growing history. Fixed-state calibration ceilings
+are respectively 65,536, 262,144, and 1,048,576 operations. All calibration
+begins at one operation, grows geometrically, and stops at its protocol-specific
+ceiling. The harness never sleeps to manufacture quiet time.
 
 Quality is independent of timing. Each run starts with the same deterministic
 ten-point design. Exploratory suites default to the first 8 of 32 checked-in

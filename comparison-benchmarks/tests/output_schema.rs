@@ -22,6 +22,7 @@ fn record_round_trips_through_versioned_json() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("record");
     let json = serde_json::to_string(&record).expect("serialize");
@@ -41,6 +42,7 @@ fn unsupported_cases_are_structured_records() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<TpeBackend>(&cli).expect("unsupported record");
     assert!(!record.supported);
@@ -77,6 +79,7 @@ fn cycle_samples_start_from_fresh_history() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("record");
     assert_eq!(record.observations, 13);
@@ -96,6 +99,7 @@ fn ingest_batch_counts_every_inserted_observation() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("record");
     assert_eq!(record.observations, 10);
@@ -116,9 +120,33 @@ fn cold_suggest_is_not_automatically_batched() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("record");
     assert_eq!(record.timing.expect("timing").operations_per_sample, 1);
+}
+
+#[test]
+fn reused_calibration_is_recorded_without_recalibrating() {
+    let cli = BackendCli {
+        config: RunConfig {
+            scenario: Scenario::LinearFloat,
+            operation: Operation::Suggest,
+            history: 10,
+            dimensions: 1,
+            iterations: 0,
+            samples: 1,
+            warmup: 0,
+            ..RunConfig::default()
+        },
+        format: OutputFormat::Json,
+        calibrated_iterations: Some(3),
+    };
+    let record = execute::<ParzenBackend>(&cli).expect("record");
+    assert_eq!(record.calibration_iterations, Some(3));
+    assert_eq!(record.calibration_reused, Some(true));
+    assert_eq!(record.calibration_duration_seconds, None);
+    assert_eq!(record.timing.expect("timing").operations_per_sample, 3);
 }
 
 #[cfg(not(feature = "dhat-heap"))]
@@ -134,6 +162,7 @@ fn memory_requires_explicit_dhat_feature() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     assert!(execute::<ParzenBackend>(&cli).is_err());
 }
@@ -152,6 +181,7 @@ fn markdown_generation_is_deterministic_for_fixed_records() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("record");
     let records = [record];
@@ -176,6 +206,7 @@ fn report_distinguishes_scalar_and_simd_parzen_records() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let mut scalar = execute::<ParzenBackend>(&cli).expect("scalar record");
     scalar.numeric_backend = Some("scalar-f64".to_owned());
@@ -202,6 +233,7 @@ fn fixed_suggest_profile_keeps_history_constant() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("fixed profile");
     assert_eq!(record.profile_workload, Some(ProfileWorkload::FixedSuggest));
@@ -228,6 +260,7 @@ fn cycle_profile_records_exact_history_growth() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let record = execute::<ParzenBackend>(&cli).expect("cycle profile");
     let operations = record.profile_operations.expect("operations");
@@ -249,6 +282,7 @@ fn profile_report_identifies_the_workload() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let parzen = execute::<ParzenBackend>(&cli).expect("profile");
     let numeric_backend = parzen
@@ -280,6 +314,7 @@ fn report_reader_rejects_old_schema_versions() {
             ..RunConfig::default()
         },
         format: OutputFormat::Json,
+        calibrated_iterations: None,
     };
     let mut record = execute::<ParzenBackend>(&cli).expect("record");
     record.schema_version = SCHEMA_VERSION - 1;

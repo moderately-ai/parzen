@@ -1,5 +1,5 @@
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     ffi::OsString,
     fs::{self, File, OpenOptions},
     io::{BufWriter, Write},
@@ -231,13 +231,7 @@ fn run() -> HarnessResult<()> {
     if cli.plan_only {
         return Ok(());
     }
-    if estimate > Duration::from_secs(45 * 60) && !cli.allow_long_run {
-        return Err(format!(
-            "estimated suite duration {:.1} minutes exceeds 45 minutes; narrow or shard the run, or pass --allow-long-run",
-            estimate.as_secs_f64() / 60.0
-        )
-        .into());
-    }
+    validate_estimated_duration(estimate, cli.shard.is_some(), cli.allow_long_run)?;
     if let Some(parent) = output.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -252,6 +246,15 @@ fn run() -> HarnessResult<()> {
         .iter()
         .filter_map(completed_key)
         .collect::<HashSet<_>>();
+    let mut calibrations = existing
+        .iter()
+        .filter_map(|record| {
+            Some((
+                calibration_key(record.binary_checksum.as_deref()?, &record.config),
+                record.calibration_iterations?,
+            ))
+        })
+        .collect::<HashMap<_, _>>();
     let file = if cli.resume {
         OpenOptions::new().create(true).append(true).open(&output)?
     } else {
@@ -293,6 +296,10 @@ fn run() -> HarnessResult<()> {
                 let binary = binary_dir.join(backend.binary);
                 let binary_checksum = sha256_file(&binary)?;
                 let config = run_config(backend, case, &cli.machine_label, protocol);
+                let calibration_key = calibration_key(&binary_checksum, &config);
+                let reused_calibration = (case.iterations == 0 && case.operation.is_batchable())
+                    .then(|| calibrations.get(&calibration_key).copied())
+                    .flatten();
                 let key = result_key(
                     &suite_environment.git_commit,
                     &binary_checksum,
@@ -322,11 +329,11 @@ fn run() -> HarnessResult<()> {
                     invoke_backend(
                         binary_dir,
                         backend,
-                        case,
                         &config,
                         &environment_snapshot,
                         &suite_environment,
                         Duration::from_secs(case_timeout_seconds),
+                        reused_calibration,
                     )?
                 };
                 record.benchmark_protocol = protocol;
@@ -337,6 +344,11 @@ fn run() -> HarnessResult<()> {
                     .map(|shard| format!("{}/{}", shard.index + 1, shard.count));
                 record.binary_checksum = Some(binary_checksum);
                 record.mix_driver_metadata_checksum();
+                if record.execution_error.is_none()
+                    && let Some(iterations) = record.calibration_iterations
+                {
+                    calibrations.insert(calibration_key, iterations);
+                }
                 if record.execution_error.is_some() && !skip {
                     failed_operations.insert(operation_key);
                     if matches!(case.operation, Operation::ColdSuggest | Operation::Suggest) {
@@ -626,11 +638,11 @@ fn select_backends(selection: &str) -> HarnessResult<Vec<BackendSpec>> {
 fn invoke_backend(
     dir: &Path,
     backend: BackendSpec,
-    case: &Case,
     config: &RunConfig,
     environment_snapshot: &str,
     suite_environment: &Environment,
     timeout: Duration,
+    calibrated_iterations: Option<usize>,
 ) -> HarnessResult<BenchmarkRecord> {
     let binary = dir.join(backend.binary);
     if !binary.is_file() {
@@ -640,46 +652,51 @@ fn invoke_backend(
         )
         .into());
     }
-    let mut child = Command::new(&binary)
+    let mut command = Command::new(&binary);
+    command
         .env(ENVIRONMENT_SNAPSHOT_VAR, environment_snapshot)
         .args([
             "--protocol",
             &config.protocol.to_string(),
             "--scenario",
-            &case.scenario.to_string(),
+            &config.scenario.to_string(),
             "--operation",
-            &case.operation.to_string(),
+            &config.operation.to_string(),
         ])
         .args([
             "--history",
-            &case.history.to_string(),
+            &config.history.to_string(),
             "--dimensions",
-            &case.dimensions.to_string(),
+            &config.dimensions.to_string(),
         ])
         .args([
             "--iterations",
-            &case.iterations.to_string(),
+            &config.iterations.to_string(),
             "--budget",
-            &case.budget.to_string(),
+            &config.budget.to_string(),
         ])
         .args([
             "--seed",
-            &case.seed.to_string(),
+            &config.seed.to_string(),
             "--samples",
-            &case.samples.to_string(),
+            &config.samples.to_string(),
         ])
         .args([
             "--warmup",
-            &case.warmup.to_string(),
+            &config.warmup.to_string(),
             "--calibration-ms",
-            &case.calibration_ms.to_string(),
+            &config.calibration_ms.to_string(),
             "--parzen-history",
             match backend.history {
                 ParzenHistory::Full => "full",
                 ParzenHistory::Bounded => "bounded",
             },
         ])
-        .args(["--machine-label", &config.machine_label, "--format", "json"])
+        .args(["--machine-label", &config.machine_label, "--format", "json"]);
+    if let Some(iterations) = calibrated_iterations {
+        command.args(["--calibrated-iterations", &iterations.to_string()]);
+    }
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -957,6 +974,31 @@ fn print_work_plan(
     Duration::from_secs_f64(estimated_seconds)
 }
 
+fn validate_estimated_duration(
+    estimate: Duration,
+    sharded: bool,
+    allow_long_run: bool,
+) -> HarnessResult<()> {
+    if allow_long_run {
+        return Ok(());
+    }
+    if sharded && estimate > Duration::from_secs(20 * 60) {
+        return Err(format!(
+            "estimated shard duration {:.1} minutes exceeds 20 minutes; increase the shard count or pass --allow-long-run",
+            estimate.as_secs_f64() / 60.0
+        )
+        .into());
+    }
+    if estimate > Duration::from_secs(45 * 60) {
+        return Err(format!(
+            "estimated suite duration {:.1} minutes exceeds 45 minutes; narrow or shard the run, or pass --allow-long-run",
+            estimate.as_secs_f64() / 60.0
+        )
+        .into());
+    }
+    Ok(())
+}
+
 fn select_shard(cases: Vec<Case>, shard: Shard) -> Vec<Case> {
     let mut weighted = cases
         .into_iter()
@@ -1022,7 +1064,7 @@ fn result_key(
     round: usize,
 ) -> String {
     format!(
-        "{commit}:{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{round}",
+        "{commit}:{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{round}",
         backend.label,
         config.scenario,
         config.operation,
@@ -1031,7 +1073,25 @@ fn result_key(
         config.seed,
         config.budget,
         config.protocol,
+        config.iterations,
+        config.samples,
+        config.warmup,
+        config.calibration_ms,
         format_args!("{:?}", config.parzen_history),
+    )
+}
+
+fn calibration_key(binary_checksum: &str, config: &RunConfig) -> String {
+    format!(
+        "{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{:?}",
+        config.scenario,
+        config.operation,
+        config.history,
+        config.dimensions,
+        config.seed,
+        config.protocol,
+        config.calibration_ms,
+        config.parzen_history,
     )
 }
 
@@ -1172,6 +1232,44 @@ mod tests {
         assert_eq!(cli.operation, Some(Operation::Suggest));
         assert_eq!(cli.history, Some(100));
         assert_eq!(cli.dimensions, Some(8));
+    }
+
+    #[test]
+    fn duration_guard_caps_shards_and_unsharded_suites() {
+        assert!(
+            validate_estimated_duration(Duration::from_secs(20 * 60), true, false).is_ok()
+        );
+        assert!(
+            validate_estimated_duration(Duration::from_secs(20 * 60 + 1), true, false).is_err()
+        );
+        assert!(
+            validate_estimated_duration(Duration::from_secs(45 * 60), false, false).is_ok()
+        );
+        assert!(
+            validate_estimated_duration(Duration::from_secs(45 * 60 + 1), false, false).is_err()
+        );
+        assert!(
+            validate_estimated_duration(Duration::from_secs(3 * 60 * 60), true, true).is_ok()
+        );
+    }
+
+    #[test]
+    fn result_keys_include_timing_overrides_but_calibration_keys_do_not() {
+        let backend = BACKENDS[0];
+        let first = RunConfig {
+            dimensions: 1,
+            ..RunConfig::default()
+        };
+        let mut second = first.clone();
+        second.samples += 1;
+        assert_ne!(
+            result_key("commit", "binary", backend, &first, 0),
+            result_key("commit", "binary", backend, &second, 0)
+        );
+        assert_eq!(
+            calibration_key("binary", &first),
+            calibration_key("binary", &second)
+        );
     }
 
     #[test]

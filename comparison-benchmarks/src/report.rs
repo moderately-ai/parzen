@@ -166,9 +166,9 @@ fn backend_label(record: &BenchmarkRecord) -> String {
 fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> HarnessResult<()> {
     writeln!(
         output,
-        "| Backend | Status | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |"
+        "| Backend | Status | Iterations/sample | Reused calibrations | Min ns/op | Median ns/op | p95 ns/op | Ops/s | Round wins |"
     )?;
-    writeln!(output, "|---|---|---:|---:|---:|---:|---:|")?;
+    writeln!(output, "|---|---|---:|---:|---:|---:|---:|---:|---:|")?;
     let wins = winner_counts(records);
     let rounds = records
         .iter()
@@ -183,9 +183,21 @@ fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
             .collect::<Vec<_>>();
         if supported.is_empty() {
             let status = record_failure_status(&group);
-            writeln!(output, "| {backend} | {status} | — | — | — | — | — |")?;
+            writeln!(output, "| {backend} | {status} | — | — | — | — | — | — | — |")?;
             continue;
         }
+        let iterations = supported
+            .iter()
+            .filter_map(|record| record.timing.as_ref().map(|timing| timing.operations_per_sample))
+            .collect::<std::collections::BTreeSet<_>>()
+            .into_iter()
+            .map(|value| value.to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        let reused = supported
+            .iter()
+            .filter(|record| record.calibration_reused == Some(true))
+            .count();
         let min = supported
             .iter()
             .filter_map(|record| record.timing.as_ref().map(|stats| stats.min_ns))
@@ -206,7 +218,8 @@ fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
         let throughput = if min > 0.0 { 1e9 / min } else { f64::INFINITY };
         writeln!(
             output,
-            "| {backend} | supported | {min:.1} | {median:.1} | {p95:.1} | {throughput:.1} | {}/{} |",
+            "| {backend} | supported | {iterations} | {reused}/{} | {min:.1} | {median:.1} | {p95:.1} | {throughput:.1} | {}/{} |",
+            supported.len(),
             wins.get(&backend).copied().unwrap_or(0),
             rounds
         )?;

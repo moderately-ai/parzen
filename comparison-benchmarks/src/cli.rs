@@ -92,6 +92,18 @@ impl BenchmarkProtocol {
             Self::Curated => 45 * 60,
         }
     }
+
+    #[must_use]
+    pub const fn max_calibration_iterations(self, state_growing: bool) -> usize {
+        match (self, state_growing) {
+            (Self::Quick, true) => 25,
+            (Self::Checkpoint, true) => 50,
+            (Self::Curated, true) => 100,
+            (Self::Quick, false) => 65_536,
+            (Self::Checkpoint, false) => 262_144,
+            (Self::Curated, false) => 1_048_576,
+        }
+    }
 }
 
 impl FromStr for BenchmarkProtocol {
@@ -190,9 +202,9 @@ impl Default for RunConfig {
             iterations: 0,
             budget: 100,
             seed: 42,
-            samples: 5,
+            samples: BenchmarkProtocol::Quick.samples(),
             warmup: 1,
-            calibration_ms: 100,
+            calibration_ms: BenchmarkProtocol::Quick.calibration_ms(),
             profile_seconds: 30,
             profile_workload: ProfileWorkload::Cycle,
             parzen_history: ParzenHistory::Full,
@@ -236,6 +248,7 @@ impl RunConfig {
 pub struct BackendCli {
     pub config: RunConfig,
     pub format: OutputFormat,
+    pub calibrated_iterations: Option<usize>,
 }
 
 impl BackendCli {
@@ -246,7 +259,11 @@ impl BackendCli {
     {
         let mut config = RunConfig::default();
         let mut format = OutputFormat::Human;
+        let mut calibrated_iterations = None;
         let mut profile_workload_explicit = false;
+        let mut samples_explicit = false;
+        let mut warmup_explicit = false;
+        let mut calibration_explicit = false;
         let mut args = args.into_iter().map(Into::into);
         while let Some(flag) = args.next() {
             let flag = flag.into_string().map_err(|_| "arguments must be UTF-8")?;
@@ -267,9 +284,19 @@ impl BackendCli {
                 "--iterations" => config.iterations = value()?.parse()?,
                 "--budget" => config.budget = value()?.parse()?,
                 "--seed" => config.seed = value()?.parse()?,
-                "--samples" => config.samples = value()?.parse()?,
-                "--warmup" => config.warmup = value()?.parse()?,
-                "--calibration-ms" => config.calibration_ms = value()?.parse()?,
+                "--samples" => {
+                    config.samples = value()?.parse()?;
+                    samples_explicit = true;
+                }
+                "--warmup" => {
+                    config.warmup = value()?.parse()?;
+                    warmup_explicit = true;
+                }
+                "--calibration-ms" => {
+                    config.calibration_ms = value()?.parse()?;
+                    calibration_explicit = true;
+                }
+                "--calibrated-iterations" => calibrated_iterations = Some(value()?.parse()?),
                 "--profile-seconds" => config.profile_seconds = value()?.parse()?,
                 "--profile-workload" => {
                     config.profile_workload = value()?.parse()?;
@@ -285,11 +312,30 @@ impl BackendCli {
         if config.dimensions == 0 {
             config.dimensions = config.scenario.default_dimensions();
         }
+        if !samples_explicit {
+            config.samples = config.protocol.samples();
+        }
+        if !warmup_explicit {
+            config.warmup = config.protocol.warmups();
+        }
+        if !calibration_explicit {
+            config.calibration_ms = config.protocol.calibration_ms();
+        }
         if profile_workload_explicit && config.operation != Operation::Profile {
             return Err("--profile-workload requires --operation profile".into());
         }
         config.validate()?;
-        Ok(Self { config, format })
+        if calibrated_iterations == Some(0) {
+            return Err("reused calibration iterations must be positive".into());
+        }
+        if calibrated_iterations.is_some() && config.iterations != 0 {
+            return Err("--calibrated-iterations conflicts with --iterations".into());
+        }
+        Ok(Self {
+            config,
+            format,
+            calibrated_iterations,
+        })
     }
 
     #[must_use]
@@ -327,9 +373,9 @@ mod tests {
     #[test]
     fn routine_timing_defaults_are_bounded() {
         let cli = BackendCli::parse(["--scenario", "linear-float"]).expect("CLI");
-        assert_eq!(cli.config.samples, 5);
+        assert_eq!(cli.config.samples, 3);
         assert_eq!(cli.config.warmup, 1);
-        assert_eq!(cli.config.calibration_ms, 100);
+        assert_eq!(cli.config.calibration_ms, 25);
     }
 
     #[test]
@@ -341,7 +387,44 @@ mod tests {
         ] {
             let cli = BackendCli::parse(["--protocol", name]).expect("protocol");
             assert_eq!(cli.config.protocol, expected);
+            assert_eq!(cli.config.samples, expected.samples());
+            assert_eq!(cli.config.warmup, expected.warmups());
+            assert_eq!(cli.config.calibration_ms, expected.calibration_ms());
         }
+    }
+
+    #[test]
+    fn explicit_timing_values_override_protocol_defaults() {
+        let cli = BackendCli::parse([
+            "--protocol",
+            "curated",
+            "--samples",
+            "2",
+            "--warmup",
+            "0",
+            "--calibration-ms",
+            "7",
+        ])
+        .expect("CLI");
+        assert_eq!(cli.config.samples, 2);
+        assert_eq!(cli.config.warmup, 0);
+        assert_eq!(cli.config.calibration_ms, 7);
+    }
+
+    #[test]
+    fn reused_calibration_is_separate_from_requested_iterations() {
+        let cli = BackendCli::parse(["--calibrated-iterations", "17"]).expect("CLI");
+        assert_eq!(cli.config.iterations, 0);
+        assert_eq!(cli.calibrated_iterations, Some(17));
+        assert!(
+            BackendCli::parse([
+                "--calibrated-iterations",
+                "17",
+                "--iterations",
+                "2"
+            ])
+            .is_err()
+        );
     }
 
     #[test]

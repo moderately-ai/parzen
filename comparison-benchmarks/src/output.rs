@@ -12,7 +12,7 @@ use crate::{
     scenarios::{Operation, Scenario},
 };
 
-pub const SCHEMA_VERSION: u32 = 5;
+pub const SCHEMA_VERSION: u32 = 6;
 pub const ENVIRONMENT_SNAPSHOT_VAR: &str = "PARZEN_BENCH_ENVIRONMENT_SNAPSHOT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -91,8 +91,9 @@ pub struct BenchmarkRecord {
     pub numeric_backend: Option<String>,
     pub simd_lane_width_f64: Option<usize>,
     pub transcendental_contract: Option<String>,
-    pub exceptional_lane_fallbacks: Option<u64>,
     pub calibration_duration_seconds: Option<f64>,
+    pub calibration_iterations: Option<usize>,
+    pub calibration_reused: Option<bool>,
     pub scenario: Scenario,
     pub operation: Operation,
     pub supported: bool,
@@ -123,11 +124,12 @@ impl BenchmarkRecord {
         metadata = mix_text(metadata, self.numeric_backend.as_deref());
         metadata = mix_usize(metadata, self.simd_lane_width_f64);
         metadata = mix_text(metadata, self.transcendental_contract.as_deref());
-        metadata = mix_u64(metadata, self.exceptional_lane_fallbacks);
         metadata = mix_u64(
             metadata,
             self.calibration_duration_seconds.map(f64::to_bits),
         );
+        metadata = mix_usize(metadata, self.calibration_iterations);
+        metadata = mix_bool(metadata, self.calibration_reused);
         self.result_checksum = self.result_checksum.rotate_left(11) ^ metadata;
     }
 
@@ -185,8 +187,9 @@ impl BenchmarkRecord {
             numeric_backend: None,
             simd_lane_width_f64: None,
             transcendental_contract: None,
-            exceptional_lane_fallbacks: None,
             calibration_duration_seconds: None,
+            calibration_iterations: None,
+            calibration_reused: None,
             scenario: config.scenario,
             operation: config.operation,
             supported: false,
@@ -250,8 +253,9 @@ impl BenchmarkRecord {
             numeric_backend: None,
             simd_lane_width_f64: None,
             transcendental_contract: None,
-            exceptional_lane_fallbacks: None,
             calibration_duration_seconds: None,
+            calibration_iterations: None,
+            calibration_reused: None,
             scenario: config.scenario,
             operation: config.operation,
             supported: true,

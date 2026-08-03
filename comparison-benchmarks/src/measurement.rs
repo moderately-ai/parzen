@@ -10,9 +10,6 @@ use crate::{
     scenarios::{Operation, Scenario},
 };
 
-const MAX_CALIBRATION_ITERATIONS: usize = 1_048_576;
-const MAX_STATE_GROWING_ITERATIONS: usize = 100;
-
 pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
     let config = cli.config.clone();
     let support = B::support(config.scenario);
@@ -63,8 +60,9 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         numeric_backend,
         simd_lane_width_f64: lane_width,
         transcendental_contract,
-        exceptional_lane_fallbacks: None,
         calibration_duration_seconds: None,
+        calibration_iterations: None,
+        calibration_reused: None,
         scenario: config.scenario,
         operation: config.operation,
         supported: true,
@@ -93,7 +91,7 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         Operation::Quality => run_quality::<B>(&config, &mut record)?,
         Operation::Memory => run_memory::<B>(&config, &fixture, &mut record)?,
         Operation::Profile => run_profile::<B>(&config, &fixture, &mut record)?,
-        _ => run_timing::<B>(&config, &fixture, &mut record)?,
+        _ => run_timing::<B>(cli, &fixture, &mut record)?,
     }
     record.mix_measurement_metadata_checksum();
     Ok(record)
@@ -160,20 +158,29 @@ fn parzen_simd_metadata(config: &RunConfig) -> (Option<String>, Option<usize>, O
 }
 
 fn run_timing<B: Backend>(
-    config: &RunConfig,
+    cli: &BackendCli,
     fixture: &Fixture,
     record: &mut BenchmarkRecord,
 ) -> HarnessResult<()> {
+    let config = &cli.config;
     for _ in 0..config.warmup {
         let _ = black_box(run_batch::<B>(config, fixture, 1)?);
     }
     let iterations = if config.iterations > 0 {
+        record.calibration_reused = Some(false);
         config.iterations
+    } else if let Some(iterations) = cli.calibrated_iterations {
+        record.calibration_iterations = Some(iterations);
+        record.calibration_reused = Some(true);
+        iterations
     } else if config.operation.is_batchable() {
         let (iterations, duration) = calibrate::<B>(config, fixture)?;
         record.calibration_duration_seconds = Some(duration.as_secs_f64());
+        record.calibration_iterations = Some(iterations);
+        record.calibration_reused = Some(false);
         iterations
     } else {
+        record.calibration_reused = Some(false);
         1
     };
     let mut raw = Vec::with_capacity(config.samples);
@@ -203,11 +210,10 @@ fn calibrate<B: Backend>(
 ) -> HarnessResult<(usize, std::time::Duration)> {
     let calibration_started = Instant::now();
     let target_ns = config.calibration_duration().as_nanos();
-    let max_iterations = if matches!(config.operation, Operation::Update | Operation::Cycle) {
-        MAX_STATE_GROWING_ITERATIONS
-    } else {
-        MAX_CALIBRATION_ITERATIONS
-    };
+    let state_growing = matches!(config.operation, Operation::Update | Operation::Cycle);
+    let max_iterations = config
+        .protocol
+        .max_calibration_iterations(state_growing);
     let mut iterations = 1;
     loop {
         let (elapsed, _) = measure_batch::<B>(config, fixture, iterations)?;
