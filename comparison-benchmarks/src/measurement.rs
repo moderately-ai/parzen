@@ -100,8 +100,10 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
 }
 
 fn parzen_simd_metadata(config: &RunConfig) -> (Option<String>, Option<usize>, Option<String>) {
-    let vectorized = matches!(config.scenario, Scenario::LinearFloat | Scenario::IndependentFloat)
-        && config.dimensions >= 4;
+    let vectorized = matches!(
+        config.scenario,
+        Scenario::LinearFloat | Scenario::IndependentFloat
+    ) && config.dimensions >= 4;
     if !vectorized {
         return (
             Some("scalar-f64-policy-fallback".to_owned()),
@@ -692,8 +694,14 @@ mod tests {
             dimensions: 4,
             ..RunConfig::default()
         };
-        assert_eq!(parzen_simd_metadata(&config).0.as_deref(), Some("scalar-f64-policy-fallback"));
+        assert_eq!(
+            parzen_simd_metadata(&config).0.as_deref(),
+            Some("scalar-f64-policy-fallback")
+        );
         config.scenario = Scenario::IndependentFloat;
-        assert_ne!(parzen_simd_metadata(&config).0.as_deref(), Some("scalar-f64-policy-fallback"));
+        assert_ne!(
+            parzen_simd_metadata(&config).0.as_deref(),
+            Some("scalar-f64-policy-fallback")
+        );
     }
 }
