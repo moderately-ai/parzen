@@ -446,6 +446,7 @@ impl ProductMixture {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
     pub(crate) fn log_pdf_continuous_batch(
         &self,
         values: &[f64],

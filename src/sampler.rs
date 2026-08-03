@@ -524,9 +524,14 @@ impl TpeSampler {
             .registry
             .as_mut()
             .ok_or_else(|| ParzenError::InternalModel("sampler is not initialized".into()))?;
-        let vectorized = should_vectorize_continuous_acquisition(
-            registry.states.iter().map(|state| &state.prepared.kind),
+        let continuous = matches!(
+            registry.states[estimator.0].prepared.kind,
+            PreparedEstimatorKind::Continuous1 | PreparedEstimatorKind::ContinuousGroup
         );
+        let vectorized = continuous
+            && should_vectorize_continuous_acquisition(
+                registry.states.iter().map(|state| &state.prepared.kind),
+            );
         let cache = &mut registry.states[estimator.0]
             .cache
             .as_mut()
@@ -539,8 +544,8 @@ impl TpeSampler {
                 .good
                 .sample_values(&mut self.rng, &mut self.workspace.candidates.values)?;
         }
-        let continuous = cache.good.is_all_continuous() && cache.bad.is_all_continuous();
         if continuous {
+            debug_assert!(cache.good.is_all_continuous() && cache.bad.is_all_continuous());
             for candidate in self.workspace.candidates.values.chunks_exact(dimensions) {
                 cache.good.append_continuous_values(
                     candidate,
