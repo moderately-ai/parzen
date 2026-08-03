@@ -41,6 +41,17 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         schema_version: SCHEMA_VERSION,
         backend: B::NAME.to_owned(),
         backend_version: B::VERSION.to_owned(),
+        benchmark_protocol: config.protocol,
+        case_timeout_seconds: None,
+        suite_timeout_seconds: None,
+        shard: None,
+        binary_checksum: None,
+        parzen_simd_feature: None,
+        numeric_backend: None,
+        simd_lane_width_f64: None,
+        transcendental_contract: None,
+        exceptional_lane_fallbacks: None,
+        calibration_duration_seconds: None,
         scenario: config.scenario,
         operation: config.operation,
         supported: true,
@@ -71,6 +82,8 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
         Operation::Profile => run_profile::<B>(&config, &fixture, &mut record)?,
         _ => run_timing::<B>(&config, &fixture, &mut record)?,
     }
+    record.result_checksum =
+        record.result_checksum.rotate_left(11) ^ config.protocol.checksum_tag();
     Ok(record)
 }
 
@@ -85,7 +98,9 @@ fn run_timing<B: Backend>(
     let iterations = if config.iterations > 0 {
         config.iterations
     } else if config.operation.is_batchable() {
-        calibrate::<B>(config, fixture)?
+        let (iterations, duration) = calibrate::<B>(config, fixture)?;
+        record.calibration_duration_seconds = Some(duration.as_secs_f64());
+        iterations
     } else {
         1
     };
@@ -110,7 +125,11 @@ fn run_timing<B: Backend>(
     Ok(())
 }
 
-fn calibrate<B: Backend>(config: &RunConfig, fixture: &Fixture) -> HarnessResult<usize> {
+fn calibrate<B: Backend>(
+    config: &RunConfig,
+    fixture: &Fixture,
+) -> HarnessResult<(usize, std::time::Duration)> {
+    let calibration_started = Instant::now();
     let target_ns = config.calibration_duration().as_nanos();
     let max_iterations = if matches!(config.operation, Operation::Update | Operation::Cycle) {
         MAX_STATE_GROWING_ITERATIONS
@@ -121,7 +140,7 @@ fn calibrate<B: Backend>(config: &RunConfig, fixture: &Fixture) -> HarnessResult
     loop {
         let (elapsed, _) = measure_batch::<B>(config, fixture, iterations)?;
         if elapsed >= target_ns || iterations >= max_iterations {
-            return Ok(iterations);
+            return Ok((iterations, calibration_started.elapsed()));
         }
         let scale = target_ns.div_ceil(elapsed.max(1));
         let estimated = iterations.saturating_mul(usize::try_from(scale).unwrap_or(usize::MAX));

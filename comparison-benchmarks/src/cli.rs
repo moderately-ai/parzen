@@ -21,6 +21,102 @@ pub enum ProfileWorkload {
     Cycle,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BenchmarkProtocol {
+    Quick,
+    Checkpoint,
+    Curated,
+}
+
+impl BenchmarkProtocol {
+    #[must_use]
+    pub const fn checksum_tag(self) -> u64 {
+        match self {
+            Self::Quick => 0x5155_4943_4b00_0001,
+            Self::Checkpoint => 0x4348_4543_4b50_0002,
+            Self::Curated => 0x4355_5241_5445_0003,
+        }
+    }
+
+    #[must_use]
+    pub const fn warmups(self) -> usize {
+        match self {
+            Self::Quick => 1,
+            Self::Checkpoint => 2,
+            Self::Curated => 3,
+        }
+    }
+
+    #[must_use]
+    pub const fn calibration_ms(self) -> u64 {
+        match self {
+            Self::Quick => 25,
+            Self::Checkpoint => 100,
+            Self::Curated => 250,
+        }
+    }
+
+    #[must_use]
+    pub const fn samples(self) -> usize {
+        match self {
+            Self::Quick => 3,
+            Self::Checkpoint => 5,
+            Self::Curated => 10,
+        }
+    }
+
+    #[must_use]
+    pub const fn rounds(self) -> usize {
+        match self {
+            Self::Quick => 2,
+            Self::Checkpoint => 4,
+            Self::Curated => 8,
+        }
+    }
+
+    #[must_use]
+    pub const fn case_timeout_seconds(self) -> u64 {
+        match self {
+            Self::Quick => 45,
+            Self::Checkpoint => 120,
+            Self::Curated => 300,
+        }
+    }
+
+    #[must_use]
+    pub const fn suite_timeout_seconds(self) -> u64 {
+        match self {
+            Self::Quick => 8 * 60,
+            Self::Checkpoint => 30 * 60,
+            Self::Curated => 45 * 60,
+        }
+    }
+}
+
+impl FromStr for BenchmarkProtocol {
+    type Err = crate::HarnessError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value {
+            "quick" => Ok(Self::Quick),
+            "checkpoint" => Ok(Self::Checkpoint),
+            "curated" => Ok(Self::Curated),
+            _ => Err(format!("unknown benchmark protocol `{value}`").into()),
+        }
+    }
+}
+
+impl std::fmt::Display for BenchmarkProtocol {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Quick => formatter.write_str("quick"),
+            Self::Checkpoint => formatter.write_str("checkpoint"),
+            Self::Curated => formatter.write_str("curated"),
+        }
+    }
+}
+
 impl ProfileWorkload {
     #[must_use]
     pub const fn checksum_tag(self) -> u64 {
@@ -66,6 +162,7 @@ impl FromStr for OutputFormat {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunConfig {
+    pub protocol: BenchmarkProtocol,
     pub scenario: Scenario,
     pub operation: Operation,
     pub history: usize,
@@ -85,6 +182,7 @@ pub struct RunConfig {
 impl Default for RunConfig {
     fn default() -> Self {
         Self {
+            protocol: BenchmarkProtocol::Quick,
             scenario: Scenario::LinearFloat,
             operation: Operation::Cycle,
             history: 1_000,
@@ -161,6 +259,7 @@ impl BackendCli {
                     .map_err(|_| "arguments must be UTF-8".into())
             };
             match flag.as_str() {
+                "--protocol" => config.protocol = value()?.parse()?,
                 "--scenario" => config.scenario = value()?.parse()?,
                 "--operation" => config.operation = value()?.parse()?,
                 "--history" => config.history = value()?.parse()?,
@@ -195,7 +294,7 @@ impl BackendCli {
 
     #[must_use]
     pub const fn usage() -> &'static str {
-        "options: --scenario NAME --operation NAME --history N --dimensions N \
+        "options: --protocol quick|checkpoint|curated --scenario NAME --operation NAME --history N --dimensions N \
          --iterations N --budget N --seed N --samples N --warmup N \
          --calibration-ms N --profile-seconds N \
          --profile-workload fixed-suggest|cycle --parzen-history full|bounded \
@@ -231,6 +330,18 @@ mod tests {
         assert_eq!(cli.config.samples, 5);
         assert_eq!(cli.config.warmup, 1);
         assert_eq!(cli.config.calibration_ms, 100);
+    }
+
+    #[test]
+    fn benchmark_protocols_parse() {
+        for (name, expected) in [
+            ("quick", BenchmarkProtocol::Quick),
+            ("checkpoint", BenchmarkProtocol::Checkpoint),
+            ("curated", BenchmarkProtocol::Curated),
+        ] {
+            let cli = BackendCli::parse(["--protocol", name]).expect("protocol");
+            assert_eq!(cli.config.protocol, expected);
+        }
     }
 
     #[test]

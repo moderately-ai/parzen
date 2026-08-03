@@ -42,6 +42,18 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
         output,
         "> Absolute timings are machine-specific. Compare only runs captured on the same machine. Timing and quality are reported independently; no combined score is calculated."
     )?;
+    let protocols = records
+        .iter()
+        .map(|record| record.benchmark_protocol.to_string())
+        .collect::<std::collections::BTreeSet<_>>();
+    if !protocols.is_empty() {
+        writeln!(output)?;
+        writeln!(
+            output,
+            "Benchmark protocol(s): {}.",
+            protocols.into_iter().collect::<Vec<_>>().join(", ")
+        )?;
+    }
     let mut grouped =
         BTreeMap::<(String, String, String, usize, usize, usize), Vec<&BenchmarkRecord>>::new();
     for record in records {

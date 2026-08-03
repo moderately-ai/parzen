@@ -33,20 +33,38 @@ comparison-benchmarks/target/release/compare characterize \
 Available suites are `smoke`, `characterize`, `timing`, `scaling`, `quality`,
 `memory`, and `full`. Use `--backend all|NAME[,NAME...]`, where a name is
 `parzen`, `parzen/full`, `parzen/bounded`, `tpe`, `hyperopt`, or `optimizer`,
-`--rounds N`, `--samples N`, `--warmup N`, `--calibration-ms N`,
-`--timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
+`--protocol quick|checkpoint|curated`, `--rounds N`, `--samples N`,
+`--warmup N`, `--calibration-ms N`, `--case-timeout-seconds N`,
+`--suite-timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
 `--output PATH`. Use `--scenario NAME`, `--operation NAME`, `--history N`, and
 `--dimensions N` to run a focused subset without changing the suite
 definitions. The driver
 prints the case count, backend invocation count,
 calibrated sampling-time floor, quality evaluation count, and memory observation
-count before starting. Characterization limits each child to 10 seconds;
-ordinary suites default to 120 seconds per child and can override that bound
-explicitly. Completed JSONL records are flushed after every child invocation.
+count before starting. Add `--plan` to print the expanded work and duration
+estimate without running anything. Quick, checkpoint, and curated protocols use
+case/suite timeout defaults of 45 seconds/8 minutes, 120 seconds/30 minutes, and
+300 seconds/45 minutes respectively. A suite estimated above 45 minutes is
+rejected unless `--allow-long-run` is explicit. Completed JSONL records are
+flushed after every child invocation.
 It captures static toolchain, repository, machine, and load preflight data once
 per suite and passes that snapshot to each isolated backend process. Children
 refresh their timestamp and CPU affinity without repeatedly launching diagnostic
 subprocesses that would add wall time and perturb the host.
+
+Long suites can be split into deterministic duration-balanced shards and safely
+resumed:
+
+```bash
+comparison-benchmarks/target/release/compare scaling \
+  --protocol curated --shard 1/4 --output results.jsonl
+comparison-benchmarks/target/release/compare scaling \
+  --protocol curated --shard 1/4 --resume --output results.jsonl
+```
+
+`--resume` validates the existing JSONL and skips records matching the commit,
+binary checksum, backend, feature configuration, case, protocol, and comparison
+round. A malformed or old-schema file is rejected rather than partially used.
 
 Regenerate a report deterministically from existing JSONL:
 
@@ -54,11 +72,12 @@ Regenerate a report deterministically from existing JSONL:
 comparison-benchmarks/target/release/compare report results.jsonl --output results.md
 ```
 
-Routine timing uses `Instant`, one warmup, calibration to at least 100 ms, five
-internal samples, and three rotated comparison rounds by default. A curated
-checkpoint can request the more expensive protocol explicitly with
-`--warmup 3 --calibration-ms 250 --samples 10 --rounds 8` after characterization
-shows that its cost is justified. The primary number is the minimum ns/op as a
+Quick timing uses `Instant`, one warmup, calibration to at least 25 ms, three
+internal samples, and two rotated comparison rounds. Checkpoint uses
+`2/100 ms/5/4`; curated uses `3/250 ms/10/8`. Explicit numeric flags can still
+override a protocol for a focused diagnostic. Quick and checkpoint results are
+screening evidence; final runtime claims require curated measurements. The
+primary number is the minimum ns/op as a
 noise-floor estimate; median, mean, standard deviation, p90, p95, throughput,
 raw samples, and round wins remain available.
 Fixture construction and fixed-history adapter setup are outside the timed
@@ -71,6 +90,8 @@ guided suggestion per sample because batching it would rebuild and ingest an
 untimed history for every measured operation. Automatic update and cycle
 calibration is capped at 100 operations so a sample does not silently turn a
 fixed-history question into a materially different, ever-growing history.
+All calibration begins at one operation, grows geometrically, and stops at a
+fixed iteration ceiling. The harness never sleeps to manufacture quiet time.
 
 Quality is independent of timing. Each run starts with the same deterministic
 ten-point design. Exploratory suites default to the first 8 of 32 checked-in

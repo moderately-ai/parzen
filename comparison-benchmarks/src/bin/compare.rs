@@ -1,16 +1,16 @@
 use std::{
     collections::HashSet,
     ffi::OsString,
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{BufWriter, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use parzen_comparison_benchmarks::{
     HarnessResult,
-    cli::{ProfileWorkload, RunConfig},
+    cli::{BenchmarkProtocol, ProfileWorkload, RunConfig},
     output::{BenchmarkRecord, ENVIRONMENT_SNAPSHOT_VAR, Environment},
     report::{read_jsonl, write_markdown},
     scenarios::{Operation, ParzenHistory, QUALITY_SEEDS, Scenario},
@@ -82,13 +82,44 @@ struct DriverCli {
     operation: Option<Operation>,
     history: Option<usize>,
     dimensions: Option<usize>,
-    rounds: usize,
+    protocol: BenchmarkProtocol,
+    rounds: Option<usize>,
     samples: Option<usize>,
     warmup: Option<usize>,
     calibration_ms: Option<u64>,
     quality_seeds: usize,
-    timeout_seconds: u64,
+    case_timeout_seconds: Option<u64>,
+    suite_timeout_seconds: Option<u64>,
+    allow_long_run: bool,
+    plan_only: bool,
+    resume: bool,
+    shard: Option<Shard>,
     memory_binary_dir: Option<PathBuf>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Shard {
+    index: usize,
+    count: usize,
+}
+
+impl std::str::FromStr for Shard {
+    type Err = parzen_comparison_benchmarks::HarnessError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        let (index, count) = value
+            .split_once('/')
+            .ok_or("shard must use INDEX/COUNT syntax")?;
+        let index = index.parse::<usize>()?;
+        let count = count.parse::<usize>()?;
+        if index == 0 || count == 0 || index > count {
+            return Err("shard index must be between 1 and its positive count".into());
+        }
+        Ok(Self {
+            index: index - 1,
+            count,
+        })
+    }
 }
 
 fn main() {
@@ -120,10 +151,7 @@ fn run() -> HarnessResult<()> {
     }
 
     let backends = select_backends(&cli.backend)?;
-    let output = cli.output.unwrap_or_else(default_output_path);
-    if let Some(parent) = output.parent() {
-        fs::create_dir_all(parent)?;
-    }
+    let output = cli.output.clone().unwrap_or_else(default_output_path);
     let executable_dir = std::env::current_exe()?
         .parent()
         .ok_or("compare executable has no parent directory")?
@@ -162,17 +190,78 @@ fn run() -> HarnessResult<()> {
     if cases.is_empty() {
         return Err("the selected filters produced no benchmark cases".into());
     }
+    if let Some(shard) = cli.shard {
+        cases = select_shard(cases, shard);
+        if cases.is_empty() {
+            return Err("the selected shard contains no benchmark cases".into());
+        }
+    }
+    let protocol = cli.protocol;
+    for case in &mut cases {
+        if cli.samples.is_none() {
+            case.samples = protocol.samples();
+        }
+        if cli.warmup.is_none() {
+            case.warmup = protocol.warmups();
+        }
+        if cli.calibration_ms.is_none() {
+            case.calibration_ms = protocol.calibration_ms();
+        }
+    }
     let timing_rounds = if matches!(cli.command.as_str(), "smoke" | "characterize") {
         1
     } else {
-        cli.rounds
+        cli.rounds.unwrap_or_else(|| protocol.rounds())
     };
-    print_work_plan(&cli.command, &cases, backends.len(), timing_rounds);
+    let case_timeout_seconds = cli
+        .case_timeout_seconds
+        .unwrap_or_else(|| protocol.case_timeout_seconds());
+    let suite_timeout_seconds = cli
+        .suite_timeout_seconds
+        .unwrap_or_else(|| protocol.suite_timeout_seconds());
+    let estimate = print_work_plan(
+        &cli,
+        &output,
+        &cases,
+        backends.len(),
+        timing_rounds,
+        case_timeout_seconds,
+        suite_timeout_seconds,
+    );
+    if cli.plan_only {
+        return Ok(());
+    }
+    if estimate > Duration::from_secs(45 * 60) && !cli.allow_long_run {
+        return Err(format!(
+            "estimated suite duration {:.1} minutes exceeds 45 minutes; narrow or shard the run, or pass --allow-long-run",
+            estimate.as_secs_f64() / 60.0
+        )
+        .into());
+    }
+    if let Some(parent) = output.parent() {
+        fs::create_dir_all(parent)?;
+    }
     let suite_environment = Environment::capture_preflight(&cli.machine_label);
     let environment_snapshot = serde_json::to_string(&suite_environment)?;
-    let mut writer = BufWriter::new(File::create(&output)?);
+    let existing = if cli.resume && output.exists() {
+        read_jsonl(&output)?
+    } else {
+        Vec::new()
+    };
+    let mut completed = existing
+        .iter()
+        .filter_map(completed_key)
+        .collect::<HashSet<_>>();
+    let file = if cli.resume {
+        OpenOptions::new().create(true).append(true).open(&output)?
+    } else {
+        File::create(&output)?
+    };
+    let mut writer = BufWriter::new(file);
     let mut failed_operations = HashSet::new();
     let mut failed_suggestions = HashSet::new();
+    let suite_started = Instant::now();
+    let mut suite_expired = false;
 
     for (case_index, case) in cases.iter().enumerate() {
         let rounds = if matches!(case.operation, Operation::Quality | Operation::Memory) {
@@ -183,6 +272,10 @@ fn run() -> HarnessResult<()> {
         for round in 0..rounds {
             let rotation = (case_index + round) % backends.len();
             for order in 0..backends.len() {
+                if suite_started.elapsed() >= Duration::from_secs(suite_timeout_seconds) {
+                    suite_expired = true;
+                    break;
+                }
                 let backend = backends[(rotation + order) % backends.len()];
                 eprintln!(
                     "{} round {}: {} {} {}",
@@ -197,6 +290,20 @@ fn run() -> HarnessResult<()> {
                 } else {
                     &executable_dir
                 };
+                let binary = binary_dir.join(backend.binary);
+                let binary_checksum = sha256_file(&binary)?;
+                let config = run_config(backend, case, &cli.machine_label, protocol);
+                let key = result_key(
+                    &suite_environment.git_commit,
+                    &binary_checksum,
+                    backend,
+                    &config,
+                    round,
+                );
+                if completed.contains(&key) {
+                    eprintln!("resume: skipping completed {key}");
+                    continue;
+                }
                 let operation_key = (backend.label, case.scenario, case.operation);
                 let suggestion_key = (backend.label, case.scenario);
                 let skip = failed_operations.contains(&operation_key)
@@ -206,7 +313,7 @@ fn run() -> HarnessResult<()> {
                     BenchmarkRecord::execution_failed(
                         backend_name(backend),
                         backend.version,
-                        run_config(backend, case, &cli.machine_label),
+                        config.clone(),
                         suite_environment.clone(),
                         "skipped after an earlier timeout for the same backend and scenario"
                             .to_owned(),
@@ -216,34 +323,50 @@ fn run() -> HarnessResult<()> {
                         binary_dir,
                         backend,
                         case,
-                        &cli.machine_label,
+                        &config,
                         &environment_snapshot,
                         &suite_environment,
-                        Duration::from_secs(cli.timeout_seconds),
+                        Duration::from_secs(case_timeout_seconds),
                     )?
                 };
+                record.benchmark_protocol = protocol;
+                record.case_timeout_seconds = Some(case_timeout_seconds);
+                record.suite_timeout_seconds = Some(suite_timeout_seconds);
+                record.shard = cli
+                    .shard
+                    .map(|shard| format!("{}/{}", shard.index + 1, shard.count));
+                record.binary_checksum = Some(binary_checksum);
                 if record.execution_error.is_some() && !skip {
                     failed_operations.insert(operation_key);
                     if matches!(case.operation, Operation::ColdSuggest | Operation::Suggest) {
                         failed_suggestions.insert(suggestion_key);
                     }
                 }
-                record.comparison_round = Some(if case.operation == Operation::Quality {
-                    case_index
-                } else {
-                    round
-                });
+                record.comparison_round = Some(round);
                 record.invocation_order = Some(order);
                 serde_json::to_writer(&mut writer, &record)?;
                 writeln!(writer)?;
                 writer.flush()?;
+                completed.insert(key);
             }
+            if suite_expired {
+                break;
+            }
+        }
+        if suite_expired {
+            break;
         }
     }
     writer.flush()?;
     let markdown = output.with_extension("md");
     write_report(&output, &markdown)?;
     println!("wrote {} and {}", output.display(), markdown.display());
+    if suite_expired {
+        eprintln!(
+            "suite timeout reached after {:.1}s; completed records were preserved and may be continued with --resume",
+            suite_started.elapsed().as_secs_f64()
+        );
+    }
     Ok(())
 }
 
@@ -268,7 +391,7 @@ where
     if command == "report" {
         report_input = args.next().map(PathBuf::from);
     }
-    let timeout_seconds = if command == "characterize" { 10 } else { 120 };
+    let characterize = command == "characterize";
     let mut cli = DriverCli {
         command,
         report_input,
@@ -279,20 +402,47 @@ where
         operation: None,
         history: None,
         dimensions: None,
-        rounds: 3,
+        protocol: BenchmarkProtocol::Quick,
+        rounds: None,
         samples: None,
         warmup: None,
         calibration_ms: None,
         quality_seeds: 8,
-        timeout_seconds,
+        case_timeout_seconds: characterize.then_some(10),
+        suite_timeout_seconds: None,
+        allow_long_run: false,
+        plan_only: false,
+        resume: false,
+        shard: None,
         memory_binary_dir: None,
     };
     while let Some(flag) = args.next() {
         let flag = flag.into_string().map_err(|_| "arguments must be UTF-8")?;
+        match flag.as_str() {
+            "--allow-long-run" => {
+                cli.allow_long_run = true;
+                continue;
+            }
+            "--plan" => {
+                cli.plan_only = true;
+                continue;
+            }
+            "--resume" => {
+                cli.resume = true;
+                continue;
+            }
+            _ => {}
+        }
         let value = args
             .next()
             .ok_or_else(|| format!("missing value for `{flag}`"))?;
         match flag.as_str() {
+            "--protocol" => {
+                cli.protocol = value
+                    .into_string()
+                    .map_err(|_| "protocol must be UTF-8")?
+                    .parse()?
+            }
             "--backend" => {
                 cli.backend = value.into_string().map_err(|_| "backend must be UTF-8")?
             }
@@ -335,10 +485,12 @@ where
                 )
             }
             "--rounds" => {
-                cli.rounds = value
-                    .into_string()
-                    .map_err(|_| "rounds must be UTF-8")?
-                    .parse()?
+                cli.rounds = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "rounds must be UTF-8")?
+                        .parse()?,
+                )
             }
             "--samples" => {
                 cli.samples = Some(
@@ -364,11 +516,21 @@ where
                         .parse()?,
                 )
             }
-            "--timeout-seconds" => {
-                cli.timeout_seconds = value
-                    .into_string()
-                    .map_err(|_| "timeout must be UTF-8")?
-                    .parse()?
+            "--case-timeout-seconds" | "--timeout-seconds" => {
+                cli.case_timeout_seconds = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "timeout must be UTF-8")?
+                        .parse()?,
+                )
+            }
+            "--suite-timeout-seconds" => {
+                cli.suite_timeout_seconds = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "suite timeout must be UTF-8")?
+                        .parse()?,
+                )
             }
             "--quality-seeds" => {
                 cli.quality_seeds = value
@@ -377,10 +539,18 @@ where
                     .parse()?
             }
             "--memory-bin-dir" => cli.memory_binary_dir = Some(PathBuf::from(value)),
+            "--shard" => {
+                cli.shard = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "shard must be UTF-8")?
+                        .parse()?,
+                )
+            }
             _ => return Err(format!("unknown argument `{flag}`\n{}", usage()).into()),
         }
     }
-    if cli.rounds == 0 {
+    if cli.rounds == Some(0) {
         return Err("rounds must be positive".into());
     }
     if cli.history == Some(0) {
@@ -395,8 +565,11 @@ where
     if cli.calibration_ms == Some(0) {
         return Err("calibration duration must be positive".into());
     }
-    if cli.timeout_seconds == 0 {
+    if cli.case_timeout_seconds == Some(0) {
         return Err("timeout must be positive".into());
+    }
+    if cli.suite_timeout_seconds == Some(0) {
+        return Err("suite timeout must be positive".into());
     }
     if cli.quality_seeds == 0 || cli.quality_seeds > QUALITY_SEEDS.len() {
         return Err(format!(
@@ -410,10 +583,12 @@ where
 
 fn usage() -> &'static str {
     "compare <smoke|characterize|timing|scaling|quality|memory|full|report JSONL> \
+     [--protocol quick|checkpoint|curated] [--plan] [--resume] [--shard INDEX/COUNT] \
      [--backend all|NAME[,NAME...]] [--scenario NAME] [--operation NAME] \
      [--history N] [--dimensions N] \
      [--output PATH] [--machine-label LABEL] [--rounds N] \
-     [--samples N] [--warmup N] [--calibration-ms N] [--timeout-seconds N] \
+     [--samples N] [--warmup N] [--calibration-ms N] \
+     [--case-timeout-seconds N] [--suite-timeout-seconds N] [--allow-long-run] \
      [--quality-seeds N] [--memory-bin-dir PATH]"
 }
 
@@ -451,7 +626,7 @@ fn invoke_backend(
     dir: &Path,
     backend: BackendSpec,
     case: &Case,
-    machine_label: &str,
+    config: &RunConfig,
     environment_snapshot: &str,
     suite_environment: &Environment,
     timeout: Duration,
@@ -464,10 +639,11 @@ fn invoke_backend(
         )
         .into());
     }
-    let config = run_config(backend, case, machine_label);
     let mut child = Command::new(&binary)
         .env(ENVIRONMENT_SNAPSHOT_VAR, environment_snapshot)
         .args([
+            "--protocol",
+            &config.protocol.to_string(),
             "--scenario",
             &case.scenario.to_string(),
             "--operation",
@@ -502,7 +678,7 @@ fn invoke_backend(
                 ParzenHistory::Bounded => "bounded",
             },
         ])
-        .args(["--machine-label", machine_label, "--format", "json"])
+        .args(["--machine-label", &config.machine_label, "--format", "json"])
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()?;
@@ -512,7 +688,7 @@ fn invoke_backend(
         return Ok(BenchmarkRecord::timed_out(
             backend_name(backend),
             backend.version,
-            config,
+            config.clone(),
             suite_environment.clone(),
             timeout.as_secs(),
         ));
@@ -537,8 +713,14 @@ fn backend_name(backend: BackendSpec) -> &'static str {
     }
 }
 
-fn run_config(backend: BackendSpec, case: &Case, machine_label: &str) -> RunConfig {
+fn run_config(
+    backend: BackendSpec,
+    case: &Case,
+    machine_label: &str,
+    protocol: BenchmarkProtocol,
+) -> RunConfig {
     RunConfig {
+        protocol,
         scenario: case.scenario,
         operation: case.operation,
         history: case.history,
@@ -701,7 +883,15 @@ fn apply_dimension_filter(command: &str, dimensions: Option<usize>, cases: &mut 
     }
 }
 
-fn print_work_plan(command: &str, cases: &[Case], backend_count: usize, timing_rounds: usize) {
+fn print_work_plan(
+    cli: &DriverCli,
+    output: &Path,
+    cases: &[Case],
+    backend_count: usize,
+    timing_rounds: usize,
+    case_timeout_seconds: u64,
+    suite_timeout_seconds: u64,
+) -> Duration {
     let invocations = cases
         .iter()
         .map(|case| {
@@ -732,11 +922,134 @@ fn print_work_plan(command: &str, cases: &[Case], backend_count: usize, timing_r
         .map(|case| case.history.saturating_add(case.iterations))
         .sum::<usize>()
         * backend_count;
+    let timing_seconds = timed_batch_ms as f64 / 1_000.0;
+    let setup_seconds = invocations as f64 * 0.25;
+    let quality_seconds = adaptive_evaluations as f64 * 0.005;
+    let memory_seconds = memory_observations as f64 * 0.000_02;
+    let estimated_seconds = timing_seconds + setup_seconds + quality_seconds + memory_seconds;
+    let worst_case_seconds = invocations as u64 * case_timeout_seconds;
     eprintln!(
-        "plan: {command} has {} cases and {invocations} backend invocations; calibrated timed batches request up to {:.1}s if every selected backend supports every case, excluding calibration and setup; up to {adaptive_evaluations} adaptive quality evaluations and {memory_observations} memory observations",
+        "plan: {} protocol={} cases={} backends={} invocations={} output={} shard={}\n  timed batches: {:.1}s; adaptive evaluations: {}; memory observations: {}\n  estimated duration: {:.1}s; timeout ceiling: {:.1}s; per-case timeout: {}s; suite timeout: {}s; allow-long-run required: {}",
+        cli.command,
+        cli.protocol,
         cases.len(),
-        timed_batch_ms as f64 / 1_000.0
+        backend_count,
+        invocations,
+        output.display(),
+        cli.shard.map_or_else(
+            || "all".to_owned(),
+            |shard| format!("{}/{}", shard.index + 1, shard.count)
+        ),
+        timing_seconds,
+        adaptive_evaluations,
+        memory_observations,
+        estimated_seconds,
+        worst_case_seconds,
+        case_timeout_seconds,
+        suite_timeout_seconds,
+        estimated_seconds > 45.0 * 60.0,
     );
+    Duration::from_secs_f64(estimated_seconds)
+}
+
+fn select_shard(cases: Vec<Case>, shard: Shard) -> Vec<Case> {
+    let mut weighted = cases
+        .into_iter()
+        .enumerate()
+        .map(|(original, case)| (estimated_case_weight(&case), original, case))
+        .collect::<Vec<_>>();
+    weighted.sort_by(|left, right| right.0.cmp(&left.0).then(left.1.cmp(&right.1)));
+    let mut loads = vec![0_u128; shard.count];
+    let mut buckets = (0..shard.count).map(|_| Vec::new()).collect::<Vec<_>>();
+    for (weight, original, case) in weighted {
+        let target = loads
+            .iter()
+            .enumerate()
+            .min_by_key(|(index, load)| (**load, *index))
+            .map_or(0, |(index, _)| index);
+        loads[target] = loads[target].saturating_add(weight);
+        buckets[target].push((original, case));
+    }
+    let mut selected = std::mem::take(&mut buckets[shard.index]);
+    selected.sort_by_key(|(original, _)| *original);
+    selected.into_iter().map(|(_, case)| case).collect()
+}
+
+fn estimated_case_weight(case: &Case) -> u128 {
+    match case.operation {
+        Operation::Quality => case.budget as u128 * 5_000,
+        Operation::Memory => case.history.saturating_add(case.iterations) as u128 * 20,
+        _ => case.samples as u128 * case.calibration_ms as u128 * 1_000,
+    }
+}
+
+fn sha256_file(path: &Path) -> HarnessResult<String> {
+    if !path.is_file() {
+        return Err(format!(
+            "missing {}; build all binaries before measurement",
+            path.display()
+        )
+        .into());
+    }
+    let output = if cfg!(target_os = "macos") {
+        Command::new("shasum")
+            .args(["-a", "256"])
+            .arg(path)
+            .output()?
+    } else {
+        Command::new("sha256sum").arg(path).output()?
+    };
+    if !output.status.success() {
+        return Err(format!("failed to checksum {}", path.display()).into());
+    }
+    String::from_utf8(output.stdout)?
+        .split_whitespace()
+        .next()
+        .map(str::to_owned)
+        .ok_or_else(|| "checksum command returned no digest".into())
+}
+
+fn result_key(
+    commit: &str,
+    binary_checksum: &str,
+    backend: BackendSpec,
+    config: &RunConfig,
+    round: usize,
+) -> String {
+    format!(
+        "{commit}:{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{round}",
+        backend.label,
+        config.scenario,
+        config.operation,
+        config.history,
+        config.dimensions,
+        config.seed,
+        config.budget,
+        config.protocol,
+        format_args!("{:?}", config.parzen_history),
+    )
+}
+
+fn completed_key(record: &BenchmarkRecord) -> Option<String> {
+    let checksum = record.binary_checksum.as_deref()?;
+    let backend = if record.backend == "parzen" {
+        match record.config.parzen_history {
+            ParzenHistory::Full => BACKENDS[0],
+            ParzenHistory::Bounded => BACKENDS[1],
+        }
+    } else {
+        BACKENDS
+            .iter()
+            .copied()
+            .find(|backend| backend.label == record.backend)?
+    };
+    Some(result_key(
+        &record.environment.git_commit,
+        checksum,
+        backend,
+        &record.config,
+        record.comparison_round.unwrap_or(0),
+    ))
 }
 
 fn default_output_path() -> PathBuf {
@@ -783,7 +1096,8 @@ mod tests {
             })
         );
         let cli = parse_cli(["timing"]).expect("CLI");
-        assert_eq!(cli.rounds, 3);
+        assert_eq!(cli.rounds, None);
+        assert_eq!(cli.protocol.rounds(), 2);
     }
 
     #[test]
@@ -792,10 +1106,47 @@ mod tests {
         assert!(parse_cli(["timing", "--calibration-ms", "0"]).is_err());
         assert!(parse_cli(["timing", "--rounds", "0"]).is_err());
         assert!(parse_cli(["timing", "--timeout-seconds", "0"]).is_err());
+        assert!(parse_cli(["timing", "--suite-timeout-seconds", "0"]).is_err());
         assert!(parse_cli(["quality", "--quality-seeds", "0"]).is_err());
         assert!(parse_cli(["quality", "--quality-seeds", "33"]).is_err());
         assert!(parse_cli(["timing", "--history", "0"]).is_err());
         assert!(parse_cli(["timing", "--dimensions", "0"]).is_err());
+    }
+
+    #[test]
+    fn protocols_supply_bounded_defaults_and_flags_do_not_consume_values() {
+        let quick = parse_cli(["timing", "--protocol", "quick", "--plan"]).expect("quick");
+        assert_eq!(quick.protocol, BenchmarkProtocol::Quick);
+        assert!(quick.plan_only);
+        assert_eq!(quick.protocol.suite_timeout_seconds(), 8 * 60);
+
+        let curated = parse_cli([
+            "timing",
+            "--protocol",
+            "curated",
+            "--resume",
+            "--allow-long-run",
+        ])
+        .expect("curated");
+        assert_eq!(curated.protocol, BenchmarkProtocol::Curated);
+        assert!(curated.resume);
+        assert!(curated.allow_long_run);
+    }
+
+    #[test]
+    fn shards_parse_and_partition_every_case_once() {
+        assert_eq!(
+            "1/3".parse::<Shard>().expect("shard"),
+            Shard { index: 0, count: 3 }
+        );
+        assert!("0/3".parse::<Shard>().is_err());
+        assert!("4/3".parse::<Shard>().is_err());
+        let cases = cases_for("scaling").expect("cases");
+        let expected = cases.len();
+        let selected = (0..3)
+            .flat_map(|index| select_shard(cases.clone(), Shard { index, count: 3 }))
+            .count();
+        assert_eq!(selected, expected);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 use parzen_comparison_benchmarks::{
     backends::parzen_backend::ParzenBackend,
     backends::tpe_backend::TpeBackend,
-    cli::{BackendCli, OutputFormat, ProfileWorkload, RunConfig},
+    cli::{BackendCli, BenchmarkProtocol, OutputFormat, ProfileWorkload, RunConfig},
     measurement::execute,
     output::{BenchmarkRecord, SCHEMA_VERSION},
     report::{read_jsonl, write_markdown},
@@ -27,6 +27,7 @@ fn record_round_trips_through_versioned_json() {
     let json = serde_json::to_string(&record).expect("serialize");
     let decoded: BenchmarkRecord = serde_json::from_str(&json).expect("deserialize");
     assert_eq!(decoded.schema_version, SCHEMA_VERSION);
+    assert_eq!(decoded.benchmark_protocol, BenchmarkProtocol::Quick);
     assert_eq!(decoded.fixture_checksum, record.fixture_checksum);
     assert_eq!(decoded.observations, 11);
 }

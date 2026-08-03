@@ -8,11 +8,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     HarnessResult,
-    cli::{OutputFormat, ProfileWorkload, RunConfig},
+    cli::{BenchmarkProtocol, OutputFormat, ProfileWorkload, RunConfig},
     scenarios::{Operation, Scenario},
 };
 
-pub const SCHEMA_VERSION: u32 = 4;
+pub const SCHEMA_VERSION: u32 = 5;
 pub const ENVIRONMENT_SNAPSHOT_VAR: &str = "PARZEN_BENCH_ENVIRONMENT_SNAPSHOT";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -82,6 +82,17 @@ pub struct BenchmarkRecord {
     pub schema_version: u32,
     pub backend: String,
     pub backend_version: String,
+    pub benchmark_protocol: BenchmarkProtocol,
+    pub case_timeout_seconds: Option<u64>,
+    pub suite_timeout_seconds: Option<u64>,
+    pub shard: Option<String>,
+    pub binary_checksum: Option<String>,
+    pub parzen_simd_feature: Option<bool>,
+    pub numeric_backend: Option<String>,
+    pub simd_lane_width_f64: Option<usize>,
+    pub transcendental_contract: Option<String>,
+    pub exceptional_lane_fallbacks: Option<u64>,
+    pub calibration_duration_seconds: Option<f64>,
     pub scenario: Scenario,
     pub operation: Operation,
     pub supported: bool,
@@ -118,6 +129,17 @@ impl BenchmarkRecord {
             schema_version: SCHEMA_VERSION,
             backend: backend.to_owned(),
             backend_version: version.to_owned(),
+            benchmark_protocol: config.protocol,
+            case_timeout_seconds: None,
+            suite_timeout_seconds: None,
+            shard: None,
+            binary_checksum: None,
+            parzen_simd_feature: None,
+            numeric_backend: None,
+            simd_lane_width_f64: None,
+            transcendental_contract: None,
+            exceptional_lane_fallbacks: None,
+            calibration_duration_seconds: None,
             scenario: config.scenario,
             operation: config.operation,
             supported: false,
@@ -172,6 +194,17 @@ impl BenchmarkRecord {
             schema_version: SCHEMA_VERSION,
             backend: backend.to_owned(),
             backend_version: version.to_owned(),
+            benchmark_protocol: config.protocol,
+            case_timeout_seconds: None,
+            suite_timeout_seconds: None,
+            shard: None,
+            binary_checksum: None,
+            parzen_simd_feature: None,
+            numeric_backend: None,
+            simd_lane_width_f64: None,
+            transcendental_contract: None,
+            exceptional_lane_fallbacks: None,
+            calibration_duration_seconds: None,
             scenario: config.scenario,
             operation: config.operation,
             supported: true,
