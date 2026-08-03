@@ -865,10 +865,14 @@ fn cases_for(command: &str) -> HarnessResult<Vec<Case>> {
 }
 
 fn apply_history_filter(command: &str, history: Option<usize>, cases: &mut Vec<Case>) {
-    if let Some(history) = history
-        && matches!(command, "scaling" | "memory" | "full")
-    {
-        cases.retain(|case| case.history == history);
+    if let Some(history) = history {
+        if matches!(command, "scaling" | "memory" | "full") {
+            cases.retain(|case| case.history == history);
+        } else {
+            for case in cases {
+                case.history = history;
+            }
+        }
     }
 }
 
@@ -1191,6 +1195,13 @@ mod tests {
         apply_history_filter("memory", Some(1_000), &mut cases);
         assert_eq!(cases.len(), 1);
         assert_eq!(cases[0].history, 1_000);
+    }
+
+    #[test]
+    fn timing_history_filter_overrides_the_default_case() {
+        let mut timing = vec![base_case(Scenario::IndependentFloat, Operation::Cycle)];
+        apply_history_filter("timing", Some(10_000), &mut timing);
+        assert_eq!(timing[0].history, 10_000);
     }
 
     #[test]
