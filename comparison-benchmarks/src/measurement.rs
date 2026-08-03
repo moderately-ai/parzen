@@ -7,7 +7,7 @@ use crate::{
     fixtures::{Fixture, checksum_values},
     objectives::{evaluate, optimum},
     output::{BenchmarkRecord, Environment, QualityStats, SCHEMA_VERSION, TimingStats},
-    scenarios::Operation,
+    scenarios::{Operation, Scenario},
 };
 
 const MAX_CALIBRATION_ITERATIONS: usize = 1_048_576;
@@ -40,7 +40,7 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
     let parzen_simd = (B::NAME == "parzen").then_some(cfg!(feature = "parzen-simd"));
     let (numeric_backend, lane_width, transcendental_contract) =
         if B::NAME == "parzen" && cfg!(feature = "parzen-simd") {
-            parzen_simd_metadata()
+            parzen_simd_metadata(&config)
         } else if B::NAME == "parzen" {
             (
                 Some("scalar-f64".to_owned()),
@@ -99,7 +99,16 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
     Ok(record)
 }
 
-fn parzen_simd_metadata() -> (Option<String>, Option<usize>, Option<String>) {
+fn parzen_simd_metadata(config: &RunConfig) -> (Option<String>, Option<usize>, Option<String>) {
+    let vectorized = matches!(config.scenario, Scenario::LinearFloat | Scenario::IndependentFloat)
+        && config.dimensions >= 4;
+    if !vectorized {
+        return (
+            Some("scalar-f64-policy-fallback".to_owned()),
+            Some(1),
+            Some("platform f64 scalar transcendental functions".to_owned()),
+        );
+    }
     #[cfg(target_arch = "x86_64")]
     {
         if std::arch::is_x86_feature_detected!("avx2") && std::arch::is_x86_feature_detected!("fma")
@@ -673,5 +682,18 @@ mod tests {
         assert_eq!(stats.median_ns, 3.0);
         assert_eq!(stats.p95_ns, 4.0);
         assert_eq!(stats.operations_per_sample, 7);
+    }
+
+    #[cfg(feature = "parzen-simd")]
+    #[test]
+    fn simd_metadata_reports_policy_fallbacks_truthfully() {
+        let mut config = RunConfig {
+            scenario: Scenario::CorrelatedNumeric,
+            dimensions: 4,
+            ..RunConfig::default()
+        };
+        assert_eq!(parzen_simd_metadata(&config).0.as_deref(), Some("scalar-f64-policy-fallback"));
+        config.scenario = Scenario::IndependentFloat;
+        assert_ne!(parzen_simd_metadata(&config).0.as_deref(), Some("scalar-f64-policy-fallback"));
     }
 }

@@ -4,7 +4,6 @@
 
 //! Runtime-dispatched numeric kernels used by TPE acquisition.
 
-#[cfg(any(test, not(feature = "simd")))]
 mod scalar;
 
 #[cfg(feature = "simd")]
@@ -21,6 +20,8 @@ pub(crate) use simd::continuous_log_pdf_batch;
 
 #[cfg(not(feature = "simd"))]
 pub(crate) use scalar::continuous_log_pdf_batch;
+
+pub(crate) use scalar::continuous_log_pdf_batch as continuous_log_pdf_batch_scalar;
 
 #[cfg(test)]
 mod tests {

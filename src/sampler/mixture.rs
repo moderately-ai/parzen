@@ -450,6 +450,7 @@ impl ProductMixture {
         &self,
         values: &[f64],
         candidates: usize,
+        vectorized: bool,
         output: &mut [f64],
         log_weights: &mut Vec<f64>,
         component_scores: &mut Vec<f64>,
@@ -475,14 +476,25 @@ impl ProductMixture {
         log_weights.clear();
         self.weights.fill_log_weights(log_weights);
         component_scores.resize(log_weights.len(), 0.0);
-        super::vector_math::continuous_log_pdf_batch(
-            values,
-            candidates,
-            &dimensions,
-            log_weights,
-            output,
-            component_scores,
-        );
+        if vectorized {
+            super::vector_math::continuous_log_pdf_batch(
+                values,
+                candidates,
+                &dimensions,
+                log_weights,
+                output,
+                component_scores,
+            );
+        } else {
+            super::vector_math::continuous_log_pdf_batch_scalar(
+                values,
+                candidates,
+                &dimensions,
+                log_weights,
+                output,
+                component_scores,
+            );
+        }
         Ok(())
     }
 

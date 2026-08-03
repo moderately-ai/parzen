@@ -25,7 +25,7 @@ use smallvec::SmallVec;
 use self::{
     history::{BoundedHistory, FullHistory, RankKey},
     mixture::{ModelBuildWorkspace, ProductMixture},
-    prepared::PreparedEstimator,
+    prepared::{PreparedEstimator, PreparedEstimatorKind},
     workspace::AcquisitionWorkspace,
 };
 use crate::{
@@ -520,11 +520,14 @@ impl TpeSampler {
         &mut self,
         estimator: EstimatorId,
     ) -> Result<SmallVec<[(ParamId, ParamValue); 8]>, ParzenError> {
-        let cache = &mut self
+        let registry = self
             .registry
             .as_mut()
-            .ok_or_else(|| ParzenError::InternalModel("sampler is not initialized".into()))?
-            .states[estimator.0]
+            .ok_or_else(|| ParzenError::InternalModel("sampler is not initialized".into()))?;
+        let vectorized = should_vectorize_continuous_acquisition(
+            registry.states.iter().map(|state| &state.prepared.kind),
+        );
+        let cache = &mut registry.states[estimator.0]
             .cache
             .as_mut()
             .ok_or_else(|| ParzenError::InternalModel("estimator cache is missing".into()))?;
@@ -547,6 +550,7 @@ impl TpeSampler {
             cache.good.log_pdf_continuous_batch(
                 &self.workspace.candidates.transformed_values,
                 candidates,
+                vectorized,
                 &mut self.workspace.candidates.good_scores,
                 &mut self.workspace.good_components,
                 &mut self.workspace.candidates.component_scores,
@@ -554,6 +558,7 @@ impl TpeSampler {
             cache.bad.log_pdf_continuous_batch(
                 &self.workspace.candidates.transformed_values,
                 candidates,
+                vectorized,
                 &mut self.workspace.candidates.bad_scores,
                 &mut self.workspace.bad_components,
                 &mut self.workspace.candidates.component_scores,
@@ -781,6 +786,15 @@ impl TpeSampler {
     }
 }
 
+fn should_vectorize_continuous_acquisition<'a>(
+    kinds: impl ExactSizeIterator<Item = &'a PreparedEstimatorKind>,
+) -> bool {
+    kinds.len() >= 4
+        && kinds
+            .into_iter()
+            .all(|kind| *kind == PreparedEstimatorKind::Continuous1)
+}
+
 impl EstimatorHistory {
     fn generation(&self) -> u64 {
         match self {
@@ -981,5 +995,26 @@ mod tests {
         assert_eq!(registry.states[1].history.generation(), 0);
         assert_eq!(registry.states[0].history.retained(), 1);
         assert_eq!(registry.states[1].history.retained(), 0);
+    }
+
+    #[test]
+    fn vectorized_acquisition_is_limited_to_proven_independent_envelope() {
+        use PreparedEstimatorKind::{Categorical1, Continuous1, ContinuousGroup};
+
+        assert!(should_vectorize_continuous_acquisition(
+            [Continuous1; 4].iter()
+        ));
+        assert!(should_vectorize_continuous_acquisition(
+            [Continuous1; 16].iter()
+        ));
+        assert!(!should_vectorize_continuous_acquisition(
+            [Continuous1].iter()
+        ));
+        assert!(!should_vectorize_continuous_acquisition(
+            [ContinuousGroup].iter()
+        ));
+        assert!(!should_vectorize_continuous_acquisition(
+            [Continuous1, Categorical1, Continuous1, Continuous1].iter()
+        ));
     }
 }
