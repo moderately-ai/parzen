@@ -117,4 +117,27 @@ mod tests {
             }
         }
     }
+
+    #[cfg(all(feature = "simd", target_arch = "x86_64"))]
+    #[test]
+    #[ignore = "ten-million-value numerical audit"]
+    fn x86_exponential_long_audit_stays_within_four_ulps() {
+        const VALUES: usize = 10_000_000;
+        let mut state = 0x243f_6a88_85a3_08d3_u64;
+        let mut inputs = Vec::with_capacity(VALUES);
+        for _ in 0..VALUES {
+            state = state.wrapping_add(0x9e37_79b9_7f4a_7c15).rotate_left(17);
+            let unit = (state >> 11) as f64 * (1.0 / ((1_u64 << 53) as f64));
+            inputs.push(-700.0 * unit);
+        }
+
+        let outputs = super::simd::test_negative_exp(&inputs);
+        let maximum_ulps = inputs
+            .into_iter()
+            .zip(outputs)
+            .map(|(value, actual)| actual.to_bits().abs_diff(value.exp().to_bits()))
+            .max()
+            .unwrap_or(0);
+        assert!(maximum_ulps <= 4, "maximum ULP difference: {maximum_ulps}");
+    }
 }
