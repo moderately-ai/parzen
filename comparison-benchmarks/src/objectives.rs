@@ -2,7 +2,7 @@ use crate::{HarnessResult, fixtures::Value, scenarios::Scenario};
 
 pub fn evaluate(scenario: Scenario, params: &[Value]) -> HarnessResult<f64> {
     let value = match scenario {
-        Scenario::LinearFloat | Scenario::IndependentFloat => params
+        Scenario::LinearFloat | Scenario::IndependentFloat | Scenario::SteppedFloat => params
             .iter()
             .enumerate()
             .map(|(index, value)| {
@@ -89,6 +89,7 @@ mod tests {
         let cases = [
             (Scenario::LinearFloat, vec![Value::Float(1.5)]),
             (Scenario::Integer, vec![Value::Int(17)]),
+            (Scenario::SteppedFloat, vec![Value::Float(1.5)]),
             (Scenario::SteppedInteger, vec![Value::Int(15)]),
             (Scenario::LogFloat, vec![Value::Float(1e-3)]),
             (

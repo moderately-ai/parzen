@@ -9,6 +9,7 @@ fn known_optima_evaluate_to_declared_values() {
     let cases = [
         (Scenario::LinearFloat, vec![Value::Float(1.5)]),
         (Scenario::Integer, vec![Value::Int(17)]),
+        (Scenario::SteppedFloat, vec![Value::Float(1.5)]),
         (Scenario::Categorical, vec![Value::Categorical(7)]),
         (Scenario::LogFloat, vec![Value::Float(1e-3)]),
         (

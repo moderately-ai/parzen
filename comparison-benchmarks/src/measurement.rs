@@ -28,11 +28,12 @@ pub fn execute<B: Backend>(cli: &BackendCli) -> HarnessResult<BenchmarkRecord> {
     } else {
         config.history
     };
-    let fixture = Fixture::generate(
+    let fixture = Fixture::generate_with_integer_cardinality(
         config.scenario,
         config.dimensions,
         fixture_count,
         config.seed ^ 0xd1b5_4a32_d192_ed03,
+        config.integer_cardinality,
     )?;
     let parzen_simd = (B::NAME == "parzen").then_some(cfg!(feature = "parzen-simd"));
     let (numeric_backend, lane_width, transcendental_contract) =
@@ -211,9 +212,7 @@ fn calibrate<B: Backend>(
     let calibration_started = Instant::now();
     let target_ns = config.calibration_duration().as_nanos();
     let state_growing = matches!(config.operation, Operation::Update | Operation::Cycle);
-    let max_iterations = config
-        .protocol
-        .max_calibration_iterations(state_growing);
+    let max_iterations = config.protocol.max_calibration_iterations(state_growing);
     let mut iterations = 1;
     loop {
         let (elapsed, _) = measure_batch::<B>(config, fixture, iterations)?;
@@ -295,11 +294,12 @@ fn measure_batch<B: Backend>(
             let mut backend = B::create(config)?;
             ingest_fixture(&mut backend, fixture)?;
             let update_fixture = if config.operation == Operation::Update {
-                Some(Fixture::generate(
+                Some(Fixture::generate_with_integer_cardinality(
                     config.scenario,
                     config.dimensions,
                     iterations,
                     config.seed ^ 0xa076_1d64_78bd_642f,
+                    config.integer_cardinality,
                 )?)
             } else {
                 None
@@ -422,11 +422,12 @@ fn run_batch<B: Backend>(
         Operation::Update => {
             let mut backend = B::create(config)?;
             ingest_fixture(&mut backend, fixture)?;
-            let update_fixture = Fixture::generate(
+            let update_fixture = Fixture::generate_with_integer_cardinality(
                 config.scenario,
                 config.dimensions,
                 iterations,
                 config.seed ^ 0xa076_1d64_78bd_642f,
+                config.integer_cardinality,
             )?;
             for trial in &update_fixture.trials {
                 backend.ingest(black_box(trial))?;
@@ -475,7 +476,13 @@ fn ingest_fixture<B: Backend>(backend: &mut B, fixture: &Fixture) -> HarnessResu
 }
 
 fn run_quality<B: Backend>(config: &RunConfig, record: &mut BenchmarkRecord) -> HarnessResult<()> {
-    let startup = Fixture::generate(config.scenario, config.dimensions, 10, config.seed)?;
+    let startup = Fixture::generate_with_integer_cardinality(
+        config.scenario,
+        config.dimensions,
+        10,
+        config.seed,
+        config.integer_cardinality,
+    )?;
     let mut backend = B::create(config)?;
     ingest_fixture(&mut backend, &startup)?;
     let mut best = startup

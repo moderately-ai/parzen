@@ -43,8 +43,8 @@ Available suites are `smoke`, `characterize`, `timing`, `scaling`, `quality`,
 `--protocol quick|checkpoint|curated`, `--rounds N`, `--samples N`,
 `--warmup N`, `--calibration-ms N`, `--case-timeout-seconds N`,
 `--suite-timeout-seconds N`, `--quality-seeds N`, `--machine-label LABEL`, and
-`--output PATH`. Use `--scenario NAME`, `--operation NAME`, `--history N`, and
-`--dimensions N` to run a focused subset without changing the suite
+`--output PATH`. Use `--scenario NAME`, `--operation NAME`, `--history N`,
+`--dimensions N`, and `--integer-cardinality N` to run a focused subset without changing the suite
 definitions. The driver
 prints the case count, backend invocation count,
 calibrated sampling-time floor, quality evaluation count, and memory observation
@@ -127,6 +127,11 @@ equivalent. Correlated numeric cases compare only Parzen's explicit grouped
 model with `optimizer`'s multivariate TPE. Correlated mixed categorical cases
 are non-comparative because no selected competitor has an equivalent joint
 categorical model.
+
+The integer domain starts at -100 and contains exactly the requested number of
+values; schema-v6 records and report grouping include that cardinality. The
+stepped-float guard uses -10 through 10 with step 0.5 and is compared only with
+backends exposing equivalent stepped-float semantics.
 
 ## Memory
 

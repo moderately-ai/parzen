@@ -42,8 +42,8 @@ impl Backend for HyperoptBackend {
             | Scenario::CorrelatedMixed => {
                 Support::no("hyperopt 0.0.17 has no categorical or conditional public model")
             }
-            Scenario::SteppedInteger => {
-                Support::no("hyperopt 0.0.17 has no equivalent stepped-integer model")
+            Scenario::SteppedFloat | Scenario::SteppedInteger => {
+                Support::no("hyperopt 0.0.17 has no equivalent stepped numeric model")
             }
             Scenario::LogFloat => Support::no("hyperopt 0.0.17 has no native log-scaled range"),
             Scenario::CorrelatedNumeric => {
@@ -52,14 +52,22 @@ impl Backend for HyperoptBackend {
         }
     }
 
-    fn semantics(_config: &RunConfig) -> Vec<String> {
-        vec![
+    fn semantics(config: &RunConfig) -> Vec<String> {
+        let mut semantics = vec![
             "one independent Optimizer per modeled parameter".into(),
             "Gaussian continuous kernel; Binomial discrete integer kernel".into(),
             "ordered-float wrappers are included in measured lifecycle calls".into(),
             "gamma cutoff = 0.10 using round; 24 candidates; full retained history".into(),
             "integer values are shifted by +100 because the Binomial kernel requires a nonnegative coordinate".into(),
-        ]
+        ];
+        if config.scenario == Scenario::Integer {
+            semantics.push(format!(
+                "integer domain: -100..={} ({} exact values)",
+                -100 + config.integer_cardinality as i64 - 1,
+                config.integer_cardinality
+            ));
+        }
+        semantics
     }
 
     fn create(config: &RunConfig) -> HarnessResult<Self> {
@@ -73,8 +81,8 @@ impl Backend for HyperoptBackend {
             let seed = config.seed.wrapping_add(index as u64);
             if config.scenario == Scenario::Integer {
                 let optimizer = Optimizer::new(
-                    0_i32..=200_i32,
-                    Uniform::with_bounds(0_i32..=200_i32),
+                    0_i32..=i32::try_from(config.integer_cardinality - 1)?,
+                    Uniform::with_bounds(0_i32..=i32::try_from(config.integer_cardinality - 1)?),
                     fastrand::Rng::with_seed(seed),
                 )
                 .cutoff(0.10)

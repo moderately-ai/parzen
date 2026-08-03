@@ -64,6 +64,7 @@ struct Case {
     operation: Operation,
     history: usize,
     dimensions: usize,
+    integer_cardinality: usize,
     budget: usize,
     seed: u64,
     iterations: usize,
@@ -82,6 +83,7 @@ struct DriverCli {
     operation: Option<Operation>,
     history: Option<usize>,
     dimensions: Option<usize>,
+    integer_cardinality: Option<usize>,
     protocol: BenchmarkProtocol,
     rounds: Option<usize>,
     samples: Option<usize>,
@@ -181,6 +183,9 @@ fn run() -> HarnessResult<()> {
         }
         if let Some(calibration_ms) = cli.calibration_ms {
             case.calibration_ms = calibration_ms;
+        }
+        if let Some(cardinality) = cli.integer_cardinality {
+            case.integer_cardinality = cardinality;
         }
     }
     cases.retain(|case| {
@@ -415,6 +420,7 @@ where
         operation: None,
         history: None,
         dimensions: None,
+        integer_cardinality: None,
         protocol: BenchmarkProtocol::Quick,
         rounds: None,
         samples: None,
@@ -497,6 +503,14 @@ where
                         .parse()?,
                 )
             }
+            "--integer-cardinality" => {
+                cli.integer_cardinality = Some(
+                    value
+                        .into_string()
+                        .map_err(|_| "integer cardinality must be UTF-8")?
+                        .parse()?,
+                )
+            }
             "--rounds" => {
                 cli.rounds = Some(
                     value
@@ -572,6 +586,9 @@ where
     if cli.dimensions == Some(0) {
         return Err("dimensions must be positive".into());
     }
+    if cli.integer_cardinality.is_some_and(|value| value < 2) {
+        return Err("integer cardinality must be at least two".into());
+    }
     if cli.samples == Some(0) {
         return Err("samples must be positive".into());
     }
@@ -598,7 +615,7 @@ fn usage() -> &'static str {
     "compare <smoke|characterize|timing|scaling|quality|memory|full|report JSONL> \
      [--protocol quick|checkpoint|curated] [--plan] [--resume] [--shard INDEX/COUNT] \
      [--backend all|NAME[,NAME...]] [--scenario NAME] [--operation NAME] \
-     [--history N] [--dimensions N] \
+     [--history N] [--dimensions N] [--integer-cardinality N] \
      [--output PATH] [--machine-label LABEL] [--rounds N] \
      [--samples N] [--warmup N] [--calibration-ms N] \
      [--case-timeout-seconds N] [--suite-timeout-seconds N] [--allow-long-run] \
@@ -668,6 +685,8 @@ fn invoke_backend(
             &config.history.to_string(),
             "--dimensions",
             &config.dimensions.to_string(),
+            "--integer-cardinality",
+            &config.integer_cardinality.to_string(),
         ])
         .args([
             "--iterations",
@@ -743,6 +762,7 @@ fn run_config(
         operation: case.operation,
         history: case.history,
         dimensions: case.dimensions,
+        integer_cardinality: case.integer_cardinality,
         iterations: case.iterations,
         budget: case.budget,
         seed: case.seed,
@@ -762,6 +782,7 @@ fn base_case(scenario: Scenario, operation: Operation) -> Case {
         operation,
         history: 1_000,
         dimensions: scenario.default_dimensions(),
+        integer_cardinality: 201,
         budget: 100,
         seed: 42,
         iterations: 0,
@@ -1064,12 +1085,13 @@ fn result_key(
     round: usize,
 ) -> String {
     format!(
-        "{commit}:{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{round}",
+        "{commit}:{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{}:{round}",
         backend.label,
         config.scenario,
         config.operation,
         config.history,
         config.dimensions,
+        config.integer_cardinality,
         config.seed,
         config.budget,
         config.protocol,
@@ -1083,11 +1105,12 @@ fn result_key(
 
 fn calibration_key(binary_checksum: &str, config: &RunConfig) -> String {
     format!(
-        "{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{:?}",
+        "{binary_checksum}:{}:{}:{}:{}:{}:{}:{}:{}:{:?}",
         config.scenario,
         config.operation,
         config.history,
         config.dimensions,
+        config.integer_cardinality,
         config.seed,
         config.protocol,
         config.calibration_ms,
@@ -1226,31 +1249,28 @@ mod tests {
             "100",
             "--dimensions",
             "8",
+            "--integer-cardinality",
+            "4096",
         ])
         .expect("CLI");
         assert_eq!(cli.scenario, Some(Scenario::IndependentFloat));
         assert_eq!(cli.operation, Some(Operation::Suggest));
         assert_eq!(cli.history, Some(100));
         assert_eq!(cli.dimensions, Some(8));
+        assert_eq!(cli.integer_cardinality, Some(4_096));
     }
 
     #[test]
     fn duration_guard_caps_shards_and_unsharded_suites() {
-        assert!(
-            validate_estimated_duration(Duration::from_secs(20 * 60), true, false).is_ok()
-        );
+        assert!(validate_estimated_duration(Duration::from_secs(20 * 60), true, false).is_ok());
         assert!(
             validate_estimated_duration(Duration::from_secs(20 * 60 + 1), true, false).is_err()
         );
-        assert!(
-            validate_estimated_duration(Duration::from_secs(45 * 60), false, false).is_ok()
-        );
+        assert!(validate_estimated_duration(Duration::from_secs(45 * 60), false, false).is_ok());
         assert!(
             validate_estimated_duration(Duration::from_secs(45 * 60 + 1), false, false).is_err()
         );
-        assert!(
-            validate_estimated_duration(Duration::from_secs(3 * 60 * 60), true, true).is_ok()
-        );
+        assert!(validate_estimated_duration(Duration::from_secs(3 * 60 * 60), true, true).is_ok());
     }
 
     #[test]

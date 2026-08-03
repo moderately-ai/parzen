@@ -61,12 +61,23 @@ impl Backend for OptimizerBackend {
     }
 
     fn semantics(config: &RunConfig) -> Vec<String> {
-        vec![
+        let mut semantics = vec![
             if config.scenario == Scenario::CorrelatedNumeric { "MultivariateTpeSampler with a cached joint numeric vector".into() } else { "univariate TpeSampler; parameters sampled independently".into() },
             "Gaussian KDE with optimizer's bandwidth policy and categorical probability smoothing".into(),
             "fixed gamma = 0.10; 10 startup observations; 24 candidates; full retained history".into(),
             "fixture history is injected through public enqueue, ask/suggest, and complete_trial calls".into(),
-        ]
+        ];
+        if config.scenario == Scenario::Integer {
+            semantics.push(format!(
+                "integer domain: -100..={} ({} exact values)",
+                -100 + config.integer_cardinality as i64 - 1,
+                config.integer_cardinality
+            ));
+        }
+        if config.scenario == Scenario::SteppedFloat {
+            semantics.push("stepped-float domain: -10..=10 with exact step 0.5".into());
+        }
+        semantics
     }
 
     fn create(config: &RunConfig) -> HarnessResult<Self> {
@@ -89,7 +100,7 @@ impl Backend for OptimizerBackend {
         };
         Ok(Self {
             study,
-            parameters: make_parameters(config.scenario, config.dimensions),
+            parameters: make_parameters(config),
             scenario: config.scenario,
             pending: None,
         })
@@ -139,7 +150,9 @@ impl Backend for OptimizerBackend {
     }
 }
 
-fn make_parameters(scenario: Scenario, dimensions: usize) -> Vec<ParameterDef> {
+fn make_parameters(config: &RunConfig) -> Vec<ParameterDef> {
+    let scenario = config.scenario;
+    let dimensions = config.dimensions;
     match scenario {
         Scenario::LinearFloat | Scenario::IndependentFloat => (0..dimensions)
             .map(|i| ParameterDef::Float(FloatParam::new(-10.0, 10.0).name(format!("p{i}"))))
@@ -150,7 +163,12 @@ fn make_parameters(scenario: Scenario, dimensions: usize) -> Vec<ParameterDef> {
         Scenario::Categorical => vec![ParameterDef::Categorical(
             CategoricalParam::new((0..20).collect()).name("p0"),
         )],
-        Scenario::Integer => vec![ParameterDef::Int(IntParam::new(-100, 100).name("p0"))],
+        Scenario::SteppedFloat => vec![ParameterDef::Float(
+            FloatParam::new(-10.0, 10.0).step(0.5).name("p0"),
+        )],
+        Scenario::Integer => vec![ParameterDef::Int(
+            IntParam::new(-100, -100 + config.integer_cardinality as i64 - 1).name("p0"),
+        )],
         Scenario::SteppedInteger => vec![ParameterDef::Int(
             IntParam::new(-100, 100).step(5).name("p0"),
         )],

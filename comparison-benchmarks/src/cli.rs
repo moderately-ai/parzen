@@ -179,6 +179,7 @@ pub struct RunConfig {
     pub operation: Operation,
     pub history: usize,
     pub dimensions: usize,
+    pub integer_cardinality: usize,
     pub iterations: usize,
     pub budget: usize,
     pub seed: u64,
@@ -199,6 +200,7 @@ impl Default for RunConfig {
             operation: Operation::Cycle,
             history: 1_000,
             dimensions: 0,
+            integer_cardinality: 201,
             iterations: 0,
             budget: 100,
             seed: 42,
@@ -220,6 +222,20 @@ impl RunConfig {
         }
         if self.samples == 0 {
             return Err("samples must be positive".into());
+        }
+        if self.integer_cardinality < 2 {
+            return Err("integer cardinality must be at least two".into());
+        }
+        if self.integer_cardinality > i32::MAX as usize {
+            return Err("integer cardinality exceeds backend range limits".into());
+        }
+        if self.operation == Operation::Quality
+            && self.scenario == Scenario::Integer
+            && self.integer_cardinality < 118
+        {
+            return Err(
+                "integer quality requires a domain containing the known optimum at 17".into(),
+            );
         }
         if self.calibration_ms == 0 && self.iterations == 0 && self.operation.is_batchable() {
             return Err("calibration duration must be positive for automatic timing".into());
@@ -281,6 +297,7 @@ impl BackendCli {
                 "--operation" => config.operation = value()?.parse()?,
                 "--history" => config.history = value()?.parse()?,
                 "--dimensions" => config.dimensions = value()?.parse()?,
+                "--integer-cardinality" => config.integer_cardinality = value()?.parse()?,
                 "--iterations" => config.iterations = value()?.parse()?,
                 "--budget" => config.budget = value()?.parse()?,
                 "--seed" => config.seed = value()?.parse()?,
@@ -342,6 +359,7 @@ impl BackendCli {
     pub const fn usage() -> &'static str {
         "options: --protocol quick|checkpoint|curated --scenario NAME --operation NAME --history N --dimensions N \
          --iterations N --budget N --seed N --samples N --warmup N \
+         --integer-cardinality N \
          --calibration-ms N --profile-seconds N \
          --profile-workload fixed-suggest|cycle --parzen-history full|bounded \
          --format human|json"
@@ -368,6 +386,25 @@ mod tests {
     #[test]
     fn quality_rejects_budget_below_shared_design() {
         assert!(BackendCli::parse(["--operation", "quality", "--budget", "9"]).is_err());
+    }
+
+    #[test]
+    fn integer_cardinality_is_validated() {
+        let cli = BackendCli::parse(["--scenario", "integer", "--integer-cardinality", "4096"])
+            .expect("CLI");
+        assert_eq!(cli.config.integer_cardinality, 4_096);
+        assert!(BackendCli::parse(["--integer-cardinality", "1"]).is_err());
+        assert!(
+            BackendCli::parse([
+                "--scenario",
+                "integer",
+                "--operation",
+                "quality",
+                "--integer-cardinality",
+                "8",
+            ])
+            .is_err()
+        );
     }
 
     #[test]
@@ -416,15 +453,7 @@ mod tests {
         let cli = BackendCli::parse(["--calibrated-iterations", "17"]).expect("CLI");
         assert_eq!(cli.config.iterations, 0);
         assert_eq!(cli.calibrated_iterations, Some(17));
-        assert!(
-            BackendCli::parse([
-                "--calibrated-iterations",
-                "17",
-                "--iterations",
-                "2"
-            ])
-            .is_err()
-        );
+        assert!(BackendCli::parse(["--calibrated-iterations", "17", "--iterations", "2"]).is_err());
     }
 
     #[test]

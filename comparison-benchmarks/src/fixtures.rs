@@ -60,10 +60,23 @@ impl Fixture {
         count: usize,
         seed: u64,
     ) -> HarnessResult<Self> {
+        Self::generate_with_integer_cardinality(scenario, dimensions, count, seed, 201)
+    }
+
+    pub fn generate_with_integer_cardinality(
+        scenario: Scenario,
+        dimensions: usize,
+        count: usize,
+        seed: u64,
+        integer_cardinality: usize,
+    ) -> HarnessResult<Self> {
+        if !(2..=i32::MAX as usize).contains(&integer_cardinality) {
+            return Err("integer cardinality must fit backend range limits".into());
+        }
         let mut rng = SplitMix64::new(seed);
         let mut trials = Vec::with_capacity(count);
         for id in 0..count {
-            let params = sample_params(scenario, dimensions, &mut rng);
+            let params = sample_params(scenario, dimensions, integer_cardinality, &mut rng);
             let objective = evaluate(scenario, &params)?;
             trials.push(FixtureTrial {
                 id: id as u64,
@@ -82,13 +95,23 @@ impl Fixture {
     }
 }
 
-fn sample_params(scenario: Scenario, dimensions: usize, rng: &mut SplitMix64) -> Vec<Value> {
+fn sample_params(
+    scenario: Scenario,
+    dimensions: usize,
+    integer_cardinality: usize,
+    rng: &mut SplitMix64,
+) -> Vec<Value> {
     match scenario {
         Scenario::LinearFloat | Scenario::IndependentFloat => (0..dimensions)
             .map(|_| Value::Float(rng.range_f64(-10.0, 10.0)))
             .collect(),
+        Scenario::SteppedFloat => {
+            vec![Value::Float(-10.0 + 0.5 * rng.range_u64(41) as f64)]
+        }
         Scenario::Categorical => vec![Value::Categorical(rng.range_u64(20) as u32)],
-        Scenario::Integer => vec![Value::Int(rng.range_i64(-100, 100))],
+        Scenario::Integer => vec![Value::Int(
+            rng.range_i64(-100, -100 + integer_cardinality.saturating_sub(1) as i64),
+        )],
         Scenario::SteppedInteger => {
             vec![Value::Int(-100 + 5 * rng.range_u64(41) as i64)]
         }

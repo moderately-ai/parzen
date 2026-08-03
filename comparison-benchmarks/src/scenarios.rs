@@ -46,6 +46,7 @@ pub enum Scenario {
     IndependentFloat,
     Categorical,
     Integer,
+    SteppedFloat,
     SteppedInteger,
     LogFloat,
     MixedIndependent,
@@ -55,11 +56,12 @@ pub enum Scenario {
 }
 
 impl Scenario {
-    pub const COMPARATIVE: [Self; 9] = [
+    pub const COMPARATIVE: [Self; 10] = [
         Self::LinearFloat,
         Self::IndependentFloat,
         Self::Categorical,
         Self::Integer,
+        Self::SteppedFloat,
         Self::SteppedInteger,
         Self::LogFloat,
         Self::MixedIndependent,

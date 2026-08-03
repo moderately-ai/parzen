@@ -23,8 +23,8 @@ impl Backend for TpeBackend {
 
     fn support(scenario: Scenario) -> Support {
         match scenario {
-            Scenario::Integer | Scenario::SteppedInteger => {
-                Support::no("tpe 0.3.1 has no equivalent discrete integer model")
+            Scenario::Integer | Scenario::SteppedFloat | Scenario::SteppedInteger => {
+                Support::no("tpe 0.3.1 has no equivalent stepped or discrete numeric model")
             }
             Scenario::LogFloat => Support::no("tpe 0.3.1 has no native log-scaled range"),
             Scenario::MixedIndependent | Scenario::CorrelatedMixed => Support::no(

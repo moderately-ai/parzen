@@ -29,7 +29,7 @@ impl Backend for ParzenBackend {
     }
 
     fn semantics(config: &RunConfig) -> Vec<String> {
-        vec![
+        let mut semantics = vec![
             "Gaussian product kernels; explicit groups use joint trial-aligned mixtures".into(),
             match config.parzen_history {
                 ParzenHistory::Full => "gamma = ceil(0.10 * observations), minimum one".into(),
@@ -45,11 +45,22 @@ impl Backend for ParzenBackend {
                     ParzenHistory::Bounded => "bounded (25 good, 512 bad, 64 recent bad)",
                 }
             ),
-        ]
+        ];
+        if config.scenario == Scenario::Integer {
+            semantics.push(format!(
+                "integer domain: -100..={} ({} exact values)",
+                -100 + config.integer_cardinality as i64 - 1,
+                config.integer_cardinality
+            ));
+        }
+        if config.scenario == Scenario::SteppedFloat {
+            semantics.push("stepped-float domain: -10..=10 with exact step 0.5".into());
+        }
+        semantics
     }
 
     fn create(config: &RunConfig) -> HarnessResult<Self> {
-        let (space, dimensions) = make_space(config.scenario, config.dimensions)?;
+        let (space, dimensions) = make_space(config)?;
         let history = match config.parzen_history {
             ParzenHistory::Full => HistoryPolicy::Full,
             ParzenHistory::Bounded => HistoryPolicy::Bounded {
@@ -123,10 +134,9 @@ impl Backend for ParzenBackend {
     }
 }
 
-fn make_space(
-    scenario: Scenario,
-    requested_dimensions: usize,
-) -> HarnessResult<(SearchSpace, usize)> {
+fn make_space(config: &RunConfig) -> HarnessResult<(SearchSpace, usize)> {
+    let scenario = config.scenario;
+    let requested_dimensions = config.dimensions;
     let dimensions = if scenario == Scenario::CorrelatedNumeric {
         requested_dimensions.max(2)
     } else {
@@ -154,10 +164,19 @@ fn make_space(
                 Distribution::Categorical(CategoricalDistribution::new(20)?),
             )?;
         }
+        Scenario::SteppedFloat => {
+            space.add(
+                parameter_name(0),
+                Distribution::Float(FloatDistribution::linear(-10.0, 10.0)?.with_step(0.5)?),
+            )?;
+        }
         Scenario::Integer => {
             space.add(
                 parameter_name(0),
-                Distribution::Int(IntDistribution::linear(-100, 100)?),
+                Distribution::Int(IntDistribution::linear(
+                    -100,
+                    -100 + i64::try_from(config.integer_cardinality - 1)?,
+                )?),
             )?;
         }
         Scenario::SteppedInteger => {
@@ -219,8 +238,10 @@ fn suggest_study(
     dimensions: usize,
 ) -> HarnessResult<Vec<Value>> {
     let values = match scenario {
-        Scenario::LinearFloat | Scenario::IndependentFloat | Scenario::CorrelatedNumeric => (0
-            ..dimensions)
+        Scenario::LinearFloat
+        | Scenario::IndependentFloat
+        | Scenario::CorrelatedNumeric
+        | Scenario::SteppedFloat => (0..dimensions)
             .map(|index| {
                 study
                     .suggest_float(&parameter_name(index))

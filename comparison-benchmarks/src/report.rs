@@ -54,8 +54,10 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
             protocols.into_iter().collect::<Vec<_>>().join(", ")
         )?;
     }
-    let mut grouped =
-        BTreeMap::<(String, String, String, usize, usize, usize), Vec<&BenchmarkRecord>>::new();
+    let mut grouped = BTreeMap::<
+        (String, String, String, usize, usize, usize, usize),
+        Vec<&BenchmarkRecord>,
+    >::new();
     for record in records {
         grouped
             .entry((
@@ -67,11 +69,16 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
                 record.config.history,
                 record.config.dimensions,
                 record.config.budget,
+                record.config.integer_cardinality,
             ))
             .or_default()
             .push(record);
     }
-    for ((scenario, operation, profile_workload, history, dimensions, budget), group) in grouped {
+    for (
+        (scenario, operation, profile_workload, history, dimensions, budget, integer_cardinality),
+        group,
+    ) in grouped
+    {
         let parzen_supported = group.iter().any(|record| {
             record.backend == "parzen" && record.supported && record.execution_error.is_none()
         });
@@ -92,7 +99,7 @@ pub fn write_markdown(records: &[BenchmarkRecord], mut output: impl Write) -> Ha
         }
         writeln!(
             output,
-            "History: {history}; dimensions: {dimensions}; budget: {budget}."
+            "History: {history}; dimensions: {dimensions}; budget: {budget}; integer cardinality: {integer_cardinality}."
         )?;
         writeln!(output)?;
         if operation == "profile" {
@@ -183,12 +190,20 @@ fn write_timing_table(output: &mut impl Write, records: &[&BenchmarkRecord]) -> 
             .collect::<Vec<_>>();
         if supported.is_empty() {
             let status = record_failure_status(&group);
-            writeln!(output, "| {backend} | {status} | — | — | — | — | — | — | — |")?;
+            writeln!(
+                output,
+                "| {backend} | {status} | — | — | — | — | — | — | — |"
+            )?;
             continue;
         }
         let iterations = supported
             .iter()
-            .filter_map(|record| record.timing.as_ref().map(|timing| timing.operations_per_sample))
+            .filter_map(|record| {
+                record
+                    .timing
+                    .as_ref()
+                    .map(|timing| timing.operations_per_sample)
+            })
             .collect::<std::collections::BTreeSet<_>>()
             .into_iter()
             .map(|value| value.to_string())

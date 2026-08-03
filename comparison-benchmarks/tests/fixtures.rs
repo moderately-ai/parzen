@@ -19,3 +19,23 @@ fn conditional_fixture_marks_only_inactive_children() {
         assert_eq!(trial.params[1] == Value::Inactive, parent == 0);
     }
 }
+
+#[test]
+fn integer_cardinality_controls_the_exact_fixture_domain() {
+    for cardinality in [8, 64, 4_096, 100_001] {
+        let fixture = Fixture::generate_with_integer_cardinality(
+            Scenario::Integer,
+            1,
+            cardinality.min(10_000),
+            42,
+            cardinality,
+        )
+        .expect("fixture");
+        let high = -100 + cardinality as i64 - 1;
+        assert!(fixture.trials.iter().all(|trial| {
+            trial.params[0]
+                .as_int()
+                .is_some_and(|value| (-100..=high).contains(&value))
+        }));
+    }
+}

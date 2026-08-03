@@ -99,3 +99,34 @@ fn bounded_parzen_accepts_history_beyond_its_good_trial_cap() {
     let suggestion = backend.suggest().expect("bounded suggestion");
     assert_eq!(suggestion.len(), 1);
 }
+
+#[test]
+fn integer_domains_use_the_requested_cardinality() {
+    for cardinality in [8, 64] {
+        validate_integer_cardinality::<ParzenBackend>(cardinality);
+        validate_integer_cardinality::<OptimizerBackend>(cardinality);
+        validate_integer_cardinality::<HyperoptBackend>(cardinality);
+    }
+    validate_integer_cardinality::<ParzenBackend>(4_096);
+    validate_integer_cardinality::<OptimizerBackend>(4_096);
+}
+
+fn validate_integer_cardinality<B: Backend>(cardinality: usize) {
+    let config = RunConfig {
+        scenario: Scenario::Integer,
+        dimensions: 1,
+        integer_cardinality: cardinality,
+        ..RunConfig::default()
+    };
+    let fixture =
+        Fixture::generate_with_integer_cardinality(Scenario::Integer, 1, 12, 42, cardinality)
+            .expect("fixture");
+    let mut backend = B::create(&config).expect("backend");
+    for trial in &fixture.trials {
+        backend.ingest(trial).expect("ingest");
+    }
+    let value = backend.suggest().expect("suggest")[0]
+        .as_int()
+        .expect("integer");
+    assert!((-100..=(-100 + cardinality as i64 - 1)).contains(&value));
+}
