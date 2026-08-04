@@ -52,9 +52,8 @@ jobs:
       - uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32
         with:
           cache-bin: false
-      - uses: taiki-e/install-action@3d7d7cd5ac7f994c1892ae0c06165095b9139094
-        with:
-          tool: addlicense
+      - name: Install addlicense
+        run: go install github.com/google/addlicense@v1.2.0
       - run: cargo fmt --all -- --check
       - run: ./scripts/license-headers.sh check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
