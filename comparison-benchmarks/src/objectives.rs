@@ -1,3 +1,7 @@
+// Copyright 2026 Thomas Santerre and Moderately AI Inc.
+//
+// SPDX-License-Identifier: MIT OR Apache-2.0
+
 use crate::{HarnessResult, fixtures::Value, scenarios::Scenario};
 
 pub fn evaluate(scenario: Scenario, params: &[Value]) -> HarnessResult<f64> {

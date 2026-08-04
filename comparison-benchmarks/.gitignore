@@ -2,6 +2,7 @@
 /target-memory/
 /target-calibration/
 /results/raw/
+/results/analysis/parzen-walkthrough.html
 *.profile.json
 *.profile.json.gz
 *.profile.json.syms.json

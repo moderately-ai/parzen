@@ -16,9 +16,11 @@ fi
 args=(
   -f license-header.txt
   -ignore 'target/**'
+  -ignore '**/target/**'
   -ignore '.git/**'
   -ignore '.github/**'
   -ignore 'scripts/**'
+  -ignore 'comparison-benchmarks/results/analysis/*.html'
   -ignore '**/*.json'
   -ignore '**/*.md'
   -ignore '**/*.toml'

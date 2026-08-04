@@ -71,9 +71,16 @@ jobs:
       - name: Release bounded-history capacity
         run: cargo test --release sampler::history::tests::bounded_history_retains_exact_top_and_constant_capacity --locked
       - name: Packaged serde validation
+        shell: bash
         run: |
+          set -euo pipefail
+          version=$(cargo metadata --no-deps --format-version 1 | \
+            jq -r '.packages[] | select(.name == "parzen") | .version')
           cargo package --locked
-          cargo test --manifest-path target/package/parzen-0.2.0/Cargo.toml --locked deserialization_cannot_bypass_distribution_validation
+          manifest="target/package/parzen-$version/Cargo.toml"
+          test -f "$manifest"
+          cargo test --manifest-path "$manifest" --locked \
+            deserialization_cannot_bypass_distribution_validation
 
   supply-chain:
     runs-on: ubuntu-latest
