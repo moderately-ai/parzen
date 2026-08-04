@@ -53,7 +53,7 @@ jobs:
         with:
           cache-bin: false
       - name: Install addlicense
-        run: go install github.com/google/addlicense@v1.2.0
+        run: GOBIN="$CARGO_HOME/bin" go install github.com/google/addlicense@v1.2.0
       - run: cargo fmt --all -- --check
       - run: ./scripts/license-headers.sh check
       - run: cargo clippy --all-targets --all-features --locked -- -D warnings
