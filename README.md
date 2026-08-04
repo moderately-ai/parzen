@@ -84,6 +84,7 @@ least four independent continuous estimators. One-dimensional, grouped, categori
 and mixed estimators use the scalar kernel because SIMD did not meet the project's non-regression
 gate for those shapes.
 
-See [MIGRATING-0.1-TO-0.2.md](MIGRATING-0.1-TO-0.2.md) for the v0.1 migration guide.
+See [MIGRATING-0.2-TO-0.3.md](MIGRATING-0.2-TO-0.3.md) when upgrading from v0.2, or
+[MIGRATING-0.1-TO-0.2.md](MIGRATING-0.1-TO-0.2.md) when upgrading from v0.1.
 
 MSRV: Rust 1.89. Licensed under either MIT or Apache-2.0 at your option.

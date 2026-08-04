@@ -33,13 +33,13 @@ const BACKENDS: [BackendSpec; 5] = [
     BackendSpec {
         label: "parzen/full",
         binary: "bench-parzen",
-        version: "0.2.0",
+        version: "0.3.0",
         history: ParzenHistory::Full,
     },
     BackendSpec {
         label: "parzen/bounded",
         binary: "bench-parzen",
-        version: "0.2.0",
+        version: "0.3.0",
         history: ParzenHistory::Bounded,
     },
     BackendSpec {

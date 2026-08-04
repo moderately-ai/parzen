@@ -26,7 +26,7 @@ pub struct ParzenBackend {
 
 impl Backend for ParzenBackend {
     const NAME: &'static str = "parzen";
-    const VERSION: &'static str = "0.2.0";
+    const VERSION: &'static str = "0.3.0";
 
     fn support(_scenario: Scenario) -> Support {
         Support::yes()
