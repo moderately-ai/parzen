@@ -24,7 +24,7 @@ rand = { version = "=0.9.3", default-features = false, features = ["std", "std_r
 rand_distr = "=0.5.1"
 pulp = { version = "=0.22.3", default-features = false, features = ["std", "x86-v3"], optional = true }
 serde = { version = "=1.0.228", features = ["derive"], optional = true }
-smallvec = "=1.15.1"
+smallvec = "=1.15.2"
 
 [dev-dependencies]
 criterion = { version = "=0.8.2", default-features = false, features = ["cargo_bench_support"] }
